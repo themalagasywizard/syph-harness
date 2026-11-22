@@ -2,7 +2,8 @@
 // project, so every chat in it sees them, or to a single chat. Git runs here with the GitHub token
 // passed in the environment for github.com only, so it never lands in a repository's own config.
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import type { Home } from "./home.ts";
@@ -79,13 +80,13 @@ export function gitEnv(token: string | null, identity?: { name: string; email: s
   return env;
 }
 
-export function git(cwd: string | undefined, args: string[], opts: { token?: string | null; identity?: { name: string; email: string } | null; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<{ stdout: string; stderr: string }> {
+export function git(cwd: string | undefined, args: string[], opts: { token?: string | null; identity?: { name: string; email: string } | null; timeoutMs?: number; signal?: AbortSignal; env?: Record<string, string> } = {}): Promise<{ stdout: string; stderr: string }> {
   const clean = redactor(opts.token ?? null);
   return new Promise((resolve, reject) =>
     execFile(
       "git",
       args,
-      { cwd, timeout: opts.timeoutMs ?? 10 * 60_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true, signal: opts.signal, env: gitEnv(opts.token ?? null, opts.identity) },
+      { cwd, timeout: opts.timeoutMs ?? 10 * 60_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true, signal: opts.signal, env: { ...gitEnv(opts.token ?? null, opts.identity), ...opts.env } },
       (err, stdout, stderr) => {
         const out = clean(String(stdout ?? ""));
         const errText = clean(String(stderr ?? ""));
@@ -97,6 +98,28 @@ export function git(cwd: string | undefined, args: string[], opts: { token?: str
       },
     ),
   );
+}
+
+/**
+ * Save the working tree as a checkpoint commit without touching the branch, the index or the
+ * working tree: it goes to refs/syph/checkpoints/, so the agent's own commits are unaffected and
+ * a fresh session can restore it. Returns the commit, or null when nothing changed.
+ */
+export async function checkpointCommit(path: string, key: string, message: string, identity: { name: string; email: string }): Promise<string | null> {
+  const index = join(tmpdir(), `syph-index-${process.pid}-${Date.now()}`);
+  const env = { GIT_INDEX_FILE: index };
+  try {
+    const head = await git(path, ["rev-parse", "--verify", "HEAD"]).then((r) => r.stdout.trim()).catch(() => null);
+    if (head) await git(path, ["read-tree", "HEAD"], { env });
+    await git(path, ["add", "-A"], { env });
+    const tree = (await git(path, ["write-tree"], { env })).stdout.trim();
+    if (head && tree === (await git(path, ["rev-parse", "HEAD^{tree}"])).stdout.trim()) return null;
+    const sha = (await git(path, ["commit-tree", tree, ...(head ? ["-p", head] : []), "-m", message], { identity })).stdout.trim();
+    await git(path, ["update-ref", `refs/syph/checkpoints/${key.replace(/[^\w-]+/g, "_")}-${Date.now()}`, sha]);
+    return sha;
+  } finally {
+    rmSync(index, { force: true });
+  }
 }
 
 /** A git failure in words the user can act on. */

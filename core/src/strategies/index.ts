@@ -30,7 +30,7 @@ export interface Critique {
 }
 
 /** Ask a model to check an answer against the request. Used by verify, cascade and best-of-n. */
-export async function critique(input: StrategyInput, answer: string, tools: string, model = input.model): Promise<{ c: Critique; usage: { promptTokens: number; completionTokens: number; costUsd: number } }> {
+export async function critique(input: StrategyInput, answer: string, tools: string, model = getProfile(input.home, input.model).critic ?? input.model): Promise<{ c: Critique; usage: { promptTokens: number; completionTokens: number; costUsd: number } }> {
   const res = await complete(input.home, {
     model,
     category: input.category,

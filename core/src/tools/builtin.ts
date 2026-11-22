@@ -4,7 +4,14 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { listSkills, readSkill, skillFile } from "../skills.ts";
 import { headTail, truncate } from "../util.ts";
+import { scopeViolation } from "../scope.ts";
 import { defineTool, type Tool, type ToolContext } from "./types.ts";
+
+/** Refuse a write the task's contract puts out of bounds. Permissions, not prose. */
+function checkScope(ctx: ToolContext, abs: string) {
+  const v = scopeViolation(ctx.hooks.contract?.get(), relative(ctx.workspace, abs));
+  if (v) throw new Error(v.replace(/^Error: /, ""));
+}
 
 /** Resolve a user path inside the workspace; refuse anything that escapes it. */
 function inWorkspace(ctx: ToolContext, p: string) {
@@ -74,6 +81,7 @@ export const writeFile = defineTool({
   permission: "auto",
   run: ({ path, content }, ctx) => {
     const abs = inWorkspace(ctx, path);
+    checkScope(ctx, abs);
     mkdirSync(dirname(abs), { recursive: true });
     writeFileSync(abs, content);
     return `Wrote ${content.length} characters to ${path}`;
@@ -88,6 +96,7 @@ export const editFile = defineTool({
   run: ({ path, old_text, new_text }, ctx) => {
     const abs = inWorkspace(ctx, path);
     if (!existsSync(abs)) return `Error: file not found: ${path}`;
+    checkScope(ctx, abs);
     const src = readFileSync(abs, "utf8");
     const count = src.split(old_text).length - 1;
     if (count === 0) return "Error: old_text not found. Read the file and copy the snippet exactly.";

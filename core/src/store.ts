@@ -71,8 +71,8 @@ export function listChats(home: Home): Omit<ChatRecord, "history" | "turns">[] {
 export const getChat = (home: Home, cid: string) => readJson<ChatRecord | null>(home.path("chats", `${cid}.json`), null);
 export const saveChat = (home: Home, c: ChatRecord) => writeJson(home.path("chats", `${c.id}.json`), { ...c, updatedAt: now() });
 
-export function createChat(home: Home, input: { projectId?: string; title?: string; model?: string }): ChatRecord {
-  const c: ChatRecord = { id: id("c_"), title: input.title ?? "New chat", projectId: input.projectId, model: input.model, createdAt: now(), updatedAt: now(), turns: [], history: [] };
+export function createChat(home: Home, input: { projectId?: string; title?: string; model?: string; progressKey?: string }): ChatRecord {
+  const c: ChatRecord = { id: id("c_"), title: input.title ?? "New chat", projectId: input.projectId, model: input.model, createdAt: now(), updatedAt: now(), turns: [], history: [], ...(input.progressKey ? { progressKey: input.progressKey } : {}) };
   saveChat(home, c);
   return c;
 }

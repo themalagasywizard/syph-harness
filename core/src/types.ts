@@ -48,7 +48,7 @@ export type AgentEvent =
   | { type: "contract"; contract: Contract }
   | { type: "checks"; checks: CheckResult[] }
   | { type: "error"; error: string }
-  | { type: "run_end"; runId: string; content: string; usage: Usage; status: "ok" | "error" | "cancelled"; stopReason?: StopReason };
+  | { type: "run_end"; runId: string; content: string; usage: Usage; status: "ok" | "error" | "cancelled"; stopReason?: StopReason; recap?: Recap; question?: { question: string; options: string[] } };
 
 /** What "done" means for a task, written before the work starts. */
 export interface Contract {
@@ -97,6 +97,8 @@ export interface ModelProfile {
   fewShot: number;
   /** For the cascade strategy: model to escalate to. */
   escalateTo?: string;
+  /** Model that checks this one's answers in verify and cascade (a separate judge). Default: the same model. */
+  critic?: string;
   /** Accepts images. Unset: guessed from the model name. */
   vision?: boolean;
   costPerMTokIn?: number;
@@ -186,8 +188,8 @@ export interface ChatRecord {
   turns: Turn[];
   /** Raw model-facing history (includes tool messages). */
   history: ChatMessage[];
-  /** What "done" means for the work in this chat. */
-  contract?: Contract;
+  /** Where this chat's contract and progress are kept (scheduled tasks share one across runs). */
+  progressKey?: string;
   /** Connector and MCP tools this chat has loaded with find_tools. */
   loadedTools?: string[];
 }

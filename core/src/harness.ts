@@ -3,8 +3,9 @@
 import { Connectors } from "./connectors/index.ts";
 import { googleWorkspace } from "./connectors/google.ts";
 import { GITHUB_API, github, listGithubRepos } from "./connectors/github.ts";
-import { activeRepo, allLinkedRepos, cloneAndLink, explainGitError, git, linkedRepos, repoPrompt, repoStatus, repoTools, setActiveRepo, unlinkRepo, type RepoHost } from "./repos.ts";
+import { activeRepo, allLinkedRepos, checkpointCommit, cloneAndLink, explainGitError, git, linkedRepos, repoPrompt, repoStatus, repoTools, setActiveRepo, unlinkRepo, type RepoHost } from "./repos.ts";
 import { planPrompt, updatePlanTool } from "./plan.ts";
+import { failedChecksMessage, longTaskPrompt, longTaskTools, planToProgress, progressKey, progressPrompt, readProgress, runChecks, updateProgress, writeProgress } from "./longtask.ts";
 import { connectorAgentTools, connectorPrompt } from "./connectors/agent-tools.ts";
 import { buildSystemPrompt, compactHistory, elideToolResult } from "./context.ts";
 import { caseFromRun, evalHistory, listCases, runSuite } from "./evals/index.ts";
@@ -25,12 +26,29 @@ import { builtinTools } from "./tools/builtin.ts";
 import { ToolRegistry } from "./tools/registry.ts";
 import type { Tool, ToolContext } from "./tools/types.ts";
 import { Trace, addRating, listRuns } from "./trace.ts";
-import type { AgentEvent, ChatMessage, ChatRecord, PlanStep, Task, Turn } from "./types.ts";
+import type { AgentEvent, ChatMessage, ChatRecord, CheckResult, Contract, PlanStep, Recap, Task, Turn } from "./types.ts";
 import { id, now } from "./util.ts";
 import { FileIndex, changedFiles, mentionedFiles, snapshot } from "./files/index.ts";
 import { actionAt, checkUi, fillTemplate, flattenItem, getUi, itemsFrom, uiAgentTools, uiPrompt, type UiButton, type UiEnv } from "./ui-ext.ts";
 import type { FileRef, RepoLink } from "./types.ts";
 import { resolve } from "node:path";
+
+/** The command a shell-like call would run, for allow-lists. */
+const commandOf = (tool: string, args: unknown) => (tool === "shell" && args && typeof (args as { command?: unknown }).command === "string" ? ((args as { command: string }).command).trim() : null);
+
+/** Facts for the end-of-run recap, taken from what the harness saw, not from the answer. */
+function recapOf(turn: Turn, stopReason: Recap["stopReason"]): Recap {
+  const calls = (turn.toolCalls ?? []).filter((c) => !["update_plan", "note_progress", "set_contract", "ask_user"].includes(c.name));
+  const ran = (turn.checks ?? []).filter((c) => c.status !== "skipped");
+  return {
+    stopReason,
+    filesChanged: turn.files?.length ?? 0,
+    toolCalls: calls.length,
+    failedCalls: calls.filter((c) => c.ok === false).length,
+    ...(ran.length ? { checks: { passed: ran.filter((c) => c.status === "pass").length, total: ran.length } } : {}),
+    unfinished: [...(turn.plan ?? []).filter((s) => s.status !== "done").map((s) => s.text), ...(turn.checks ?? []).filter((c) => c.status === "fail").map((c) => `Check failing: ${c.text}`)],
+  };
+}
 
 /** Images are sent once, with the message they came with; history keeps the text that names them. */
 const stripImages = (m: ChatMessage): ChatMessage => {
@@ -54,6 +72,8 @@ type Listener = (e: { type: "job"; job: Job } | { type: "task"; task: Task } | {
 
 interface LiveRun {
   ac: AbortController;
+  /** Messages the user sent while it runs: the loop reads them at its next step. */
+  inbox: string[];
   events: AgentEvent[];
   listeners: Set<(e: AgentEvent) => void>;
 }
@@ -120,7 +140,7 @@ export class Harness {
 
   tools(): ToolRegistry {
     const connectorTools = [...connectorAgentTools(this.connectors, () => this.broadcast({ type: "connectors" })), ...this.connectors.tools()];
-    return new ToolRegistry([...builtinTools, updatePlanTool, ...this.extTools, ...connectorTools, ...repoTools(this.repoHost), ...uiAgentTools(this.home, () => this.uiEnv()), ...this.mcp.flatMap((m) => m.tools)], this.home.config().toolPermissions ?? {});
+    return new ToolRegistry([...builtinTools, updatePlanTool, ...longTaskTools, ...this.extTools, ...connectorTools, ...repoTools(this.repoHost), ...uiAgentTools(this.home, () => this.uiEnv()), ...this.mcp.flatMap((m) => m.tools)], this.home.config().toolPermissions ?? {});
   }
 
   // ---------- GitHub and linked repositories ----------
@@ -229,7 +249,7 @@ export class Harness {
 
   /** The system prompt section about connectors, the interface, plans and the chat's repos. */
   private async appPrompt(projectId?: string, chat?: ChatRecord | null) {
-    const parts = [connectorPrompt(this.connectors), uiPrompt, planPrompt, `# Files you make\nYour workspace folder is ${store.workspaceFor(this.home, projectId)}. Save documents, decks, sheets and other deliverables inside it (for example in reports/): every file you create or change there appears in the chat with a preview, its full path and Open / Show in folder buttons. When you finish, name the file and its full path.`];
+    const parts = [connectorPrompt(this.connectors), uiPrompt, planPrompt, longTaskPrompt, `# Files you make\nYour workspace folder is ${store.workspaceFor(this.home, projectId)}. Save documents, decks, sheets and other deliverables inside it (for example in reports/): every file you create or change there appears in the chat with a preview, its full path and Open / Show in folder buttons. When you finish, name the file and its full path.`];
     const gh = this.githubState();
     parts.push(await repoPrompt(this.home, chat ?? null, projectId));
     parts.push(gh.connected ? `GitHub is connected${gh.account ? ` as ${gh.account}` : ""}: handle it yourself with github_repos, github_clone, git, github_pr_create and github_api.` : "GitHub isn't connected, so only public repos can be cloned. If the user wants their own repos, ask them to open Connectors → GitHub and paste a token.");
@@ -263,6 +283,8 @@ export class Harness {
           emit({ type: "note", text: `YOLO mode: ran ${tool} without asking.` });
           return resolve(true);
         }
+        const command = commandOf(tool, args);
+        if (command && (this.home.config().approval?.allowCommands ?? []).includes(command)) return resolve(true);
         const aid = id("ap_");
         this.approvals.set(aid, { resolve, emit, chatId });
         emit({ type: "approval_request", id: aid, tool, args, reason });
@@ -307,6 +329,15 @@ export class Harness {
     return () => run.listeners.delete(listener);
   }
 
+  /** Steer a running chat: the message reaches the agent at its next step. */
+  queueMessage(chatId: string, text: string) {
+    const run = this.live.get(chatId);
+    if (!text.trim()) throw Object.assign(new Error("Message is empty."), { status: 400 });
+    if (!run) throw Object.assign(new Error("This chat isn't running. Send the message normally."), { status: 409 });
+    run.inbox.push(text.trim());
+    return { ok: true, queued: run.inbox.length };
+  }
+
   stopChat(chatId: string) {
     const run = this.live.get(chatId);
     if (!run) return false;
@@ -315,7 +346,7 @@ export class Harness {
   }
 
   private async runLive(chatId: string, text: string, opts: { model?: string; approve?: ToolContext["approve"] }) {
-    const run: LiveRun = { ac: new AbortController(), events: [], listeners: new Set() };
+    const run: LiveRun = { ac: new AbortController(), inbox: [], events: [], listeners: new Set() };
     this.live.set(chatId, run);
     const emit = (e: AgentEvent) => {
       const last = run.events.at(-1);
@@ -337,7 +368,8 @@ export class Harness {
     }
   }
 
-  private toolContext(runId: string, opts: { projectId?: string; chatId?: string; approve: ToolContext["approve"]; signal?: AbortSignal; model: string; depth?: number; onPlan?: (steps: PlanStep[]) => void }): ToolContext {
+  private toolContext(runId: string, opts: { projectId?: string; chatId?: string; approve: ToolContext["approve"]; signal?: AbortSignal; model: string; depth?: number; onPlan?: (steps: PlanStep[]) => void; progressKey?: string; onContract?: (c: Contract) => void }): ToolContext {
+    const key = opts.progressKey;
     return {
       home: this.home,
       workspace: store.workspaceFor(this.home, opts.projectId),
@@ -353,6 +385,26 @@ export class Harness {
       },
       hooks: {
         plan: opts.onPlan,
+        contract: key
+          ? {
+              get: () => readProgress(this.home, key).contract,
+              set: (c) => {
+                updateProgress(this.home, key, (p) => void (p.contract = c));
+                opts.onContract?.(c);
+              },
+            }
+          : undefined,
+        progress: key
+          ? (e) => {
+              updateProgress(this.home, key, (p) => {
+                if (e.decision) p.decisions.push(e.decision);
+                if (e.deadEnd) p.deadEnds.push(e.deadEnd);
+                if (e.blocked) p.blocked.push(e.blocked);
+                if (e.done) p.done.push(e.done);
+              });
+              return "Saved to progress.";
+            }
+          : undefined,
         createTask: (t) => {
           const task = store.upsertTask(this.home, { ...t, model: undefined });
           this.broadcast({ type: "task", task });
@@ -381,6 +433,24 @@ export class Harness {
               },
       },
     };
+  }
+
+  /** Done-when checks are shell commands the model wrote: they run only when the shell would. */
+  private allowCheck(command: string, approve: ToolContext["approve"]) {
+    return approve("shell", { command }, `Syph wants to run a done-when check: ${command}`);
+  }
+
+  /** Save a linked repo's state after a finished plan step, on a side ref (never the branch, never pushed). */
+  private async checkpoint(path: string, key: string, step: string, emit: (e: AgentEvent) => void) {
+    try {
+      const identity = (await this.repoHost.identity()) ?? { name: "Syph", email: "syph@localhost" };
+      const sha = await checkpointCommit(path, key, `Checkpoint: ${step}`.slice(0, 200), identity);
+      if (!sha) return;
+      updateProgress(this.home, key, (p) => void (p.checkpoints = [...(p.checkpoints ?? []), `${sha.slice(0, 7)} after: ${step.slice(0, 120)} (restore with git checkout ${sha.slice(0, 7)} -- .)`]));
+      emit({ type: "note", text: `Checkpoint ${sha.slice(0, 7)} saved after: ${step}` });
+    } catch {
+      /* a checkpoint must never break a run */
+    }
   }
 
   // ---------- Chat ----------
@@ -448,24 +518,57 @@ export class Harness {
         addUsage(usage, r);
         return r.content;
       });
-      const system = buildSystemPrompt(this.home, { model, projectId: chat.projectId, query: text, connectors: await this.appPrompt(chat.projectId, chat) });
+      const key = progressKey(chat);
+      const system = buildSystemPrompt(this.home, { model, projectId: chat.projectId, query: text, connectors: await this.appPrompt(chat.projectId, chat), extra: progressPrompt(readProgress(this.home, key)) });
+      const repo = activeRepo(this.home, chat, chat.projectId);
+      let checkpoints = Promise.resolve();
       const onPlan = (steps: PlanStep[]) => {
+        const before = new Set((turn.plan ?? []).filter((s) => s.status === "done").map((s) => s.text));
         turn.plan = steps;
         relay({ type: "plan", steps });
+        updateProgress(this.home, key, (p) => planToProgress(p, steps));
+        // A git checkpoint per finished step, so a fresh session can resume from the repo itself.
+        const finished = steps.filter((s) => s.status === "done" && !before.has(s.text));
+        if (repo && finished.length && this.home.config().agent.gitCheckpoints) checkpoints = checkpoints.then(() => this.checkpoint(repo.path, key, finished.map((s) => s.text).join("; "), relay));
       };
-      const ctx = this.toolContext(trace.runId, { projectId: chat.projectId, chatId, approve: opts.approve ?? this.interactiveApprove(relay, opts.signal, chatId), signal: opts.signal, model, onPlan });
-      const result = await getStrategy(profile.strategy).run({
-        home: this.home,
-        model,
-        request: text,
-        messages: [{ role: "system", content: system }, ...history],
-        tools: this.tools(),
-        ctx,
-        category: "chat",
-        signal: opts.signal,
-        emit: relay,
-      });
+      const approve = opts.approve ?? this.interactiveApprove(relay, opts.signal, chatId);
+      const ctx = this.toolContext(trace.runId, { projectId: chat.projectId, chatId, approve, signal: opts.signal, model, onPlan, progressKey: key, onContract: (c) => relay({ type: "contract", contract: c }) });
+      ctx.loadedTools = new Set(chat.loadedTools ?? []);
+      const tools = this.tools();
+      const strategy = getStrategy(profile.strategy);
+      const inbox = () => {
+        const queued = this.live.get(chatId)?.inbox.splice(0) ?? [];
+        if (queued.length) turn.steering = [...(turn.steering ?? []), ...queued];
+        return queued;
+      };
+      let result = await strategy.run({ home: this.home, model, request: text, messages: [{ role: "system", content: system }, ...history], tools, ctx, category: "chat", signal: opts.signal, emit: relay, inbox });
       addUsage(usage, result.usage);
+
+      // Sensors: when the work changed something and the contract has commands, the harness runs
+      // them itself. Red output goes back to the model (twice at most); "done" needs green.
+      const wrote = (r: typeof result) => r.toolsCalled.some((t) => !READ_ONLY_TOOLS.has(t) && !["set_contract", "note_progress", "ask_user", "find_tools"].includes(t));
+      let changed = wrote(result);
+      for (let round = 0; result.stopReason === "done" && changed; round++) {
+        const contract = readProgress(this.home, key).contract;
+        if (!contract || contract.draft || !contract.doneWhen.some((d) => d.command)) break;
+        relay({ type: "note", text: "Running the done-when checks…" });
+        const checks = await runChecks(contract, repo?.path ?? ctx.workspace, (command) => this.allowCheck(command, approve), opts.signal);
+        turn.checks = checks;
+        relay({ type: "checks", checks });
+        if (!checks.some((c) => c.status === "fail")) break;
+        if (round >= 2) {
+          result = { ...result, stopReason: "checks_failed" };
+          break;
+        }
+        relay({ type: "note", text: `${checks.filter((c) => c.status === "fail").length} check(s) failed. Fixing.`, reset: true });
+        const again = await strategy.run({ home: this.home, model, request: text, messages: [...result.messages, { role: "user", content: failedChecksMessage(checks) }], tools, ctx, category: "chat", signal: opts.signal, emit: relay, inbox });
+        addUsage(usage, again.usage);
+        changed = wrote(again);
+        result = { ...again, added: [...result.added, ...again.added], toolsCalled: [...result.toolsCalled, ...again.toolsCalled] };
+      }
+      await checkpoints;
+      chat.loadedTools = [...(ctx.loadedTools ?? [])];
+
       // What the next turn re-reads: the calls and what the user said mid-run, but only a stub of
       // each tool's output (the full text stays in the trace). This is most of a long chat's tokens.
       const kept = result.added
@@ -475,8 +578,11 @@ export class Harness {
       turn.content = result.content;
       if (result.stopReason !== "done") turn.stopReason = result.stopReason;
       if (result.question) turn.question = result.question;
+      turn.usage = usage;
+      turn.recap = recapOf(turn, result.stopReason);
+      if (result.stopReason === "repeated_error") updateProgress(this.home, key, (p) => p.blocked.push(`Run stopped: ${result.content.split("\n")[0].slice(0, 200)}`));
       trace.finish({ status: "ok", output: result.content, ...usage });
-      relay({ type: "run_end", runId: trace.runId, content: result.content, usage, status: "ok", stopReason: result.stopReason });
+      relay({ type: "run_end", runId: trace.runId, content: result.content, usage, status: "ok", stopReason: result.stopReason, recap: turn.recap, question: turn.question });
     } catch (e) {
       const cancelled = opts.signal?.aborted;
       turn.content = cancelled ? "(stopped)" : `Something went wrong: ${(e as Error).message}`;
@@ -523,7 +629,8 @@ export class Harness {
     const task = store.listTasks(this.home).find((t) => t.id === taskId);
     if (!task) throw new Error(`No task ${taskId}`);
     this.broadcast({ type: "task", task: store.patchTask(this.home, taskId, { lastStatus: "running" }) });
-    const chat = store.createChat(this.home, { projectId: task.projectId, title: `${task.name} · ${new Date().toLocaleString()}`, model: task.model ?? this.home.config().defaults.taskModel });
+    // Every run of a task shares one progress file, so the next run resumes instead of starting cold.
+    const chat = store.createChat(this.home, { projectId: task.projectId, title: `${task.name} · ${new Date().toLocaleString()}`, model: task.model ?? this.home.config().defaults.taskModel, progressKey: `task-${task.id}` });
     let status: Task["lastStatus"] = "ok";
     let runId: string | undefined;
     try {
@@ -540,7 +647,13 @@ export class Harness {
 
   /** A task run: live like any chat, but tools that need approval are declined (nobody is watching) unless YOLO covers Tasks. */
   private chatUnattended(chatId: string, text: string, model: string) {
-    return this.runLive(chatId, text, { model, approve: async () => !!this.home.config().approval?.yoloTasks });
+    return this.runLive(chatId, text, { model, approve: async (tool, args) => {
+      const a = this.home.config().approval;
+      if (a?.yoloTasks) return true;
+      // Walls for unattended runs: only the command prefixes the user allowed for Tasks.
+      const command = commandOf(tool, args);
+      return !!command && (a?.taskCommands ?? []).some((p) => command === p || command.startsWith(p + " "));
+    } });
   }
 
   // ---------- Jobs: evals and evolution run in the background with a live log ----------

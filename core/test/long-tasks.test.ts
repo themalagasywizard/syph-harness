@@ -79,3 +79,86 @@ test("context is trimmed inside a long turn, and history keeps only stubs of too
   const saved = store.getChat(home, chat.id)!;
   for (const m of saved.history.filter((m) => m.role === "tool")) assert.ok(m.content!.length < 3000, "history keeps stubs");
 });
+
+test("contract: writes outside scope are refused, and checks gate 'done'", async () => {
+  const home = tempHome({ approval: { yolo: true } });
+  const h = await new Harness(home).init({ mcp: false });
+  const ws = home.path("workspace");
+  let fixed = false;
+  mock("main", (req) => {
+    const last = req.messages.at(-1)!;
+    const tools = req.messages.filter((m) => m.role === "tool").map((m) => m.content ?? "");
+    if (!tools.length) return reply("", [call("set_contract", { goal: "Make ok.txt say yes", scope: ["src/**", "ok.txt"], never: ["db/**"], done_when: [{ text: "ok.txt says yes", command: process.platform === "win32" ? "findstr yes ok.txt" : "grep -q yes ok.txt" }] })]);
+    if (tools.length === 1) return reply("", [call("write_file", { path: "db/config.txt", content: "hack" })]);
+    if (tools.length === 2) return reply("", [call("write_file", { path: "ok.txt", content: "no" })]);
+    if (last.role === "user" && /checks and 1 failed/.test(last.content ?? "")) {
+      fixed = true;
+      return reply("", [call("write_file", { path: "ok.txt", content: "yes" })]);
+    }
+    return reply("All done.");
+  });
+  const chat = store.createChat(home, {});
+  const events: string[] = [];
+  const turn = await h.chat(chat.id, "make ok.txt say yes", { emit: (e) => events.push(e.type) });
+  const db = turn.toolCalls!.find((c) => c.name === "write_file" && (c.args as any).path === "db/config.txt")!;
+  assert.equal(db.ok, false);
+  assert.match(db.result!, /off limits/);
+  assert.ok(fixed, "the failed check went back to the model");
+  assert.equal(turn.checks![0].status, "pass");
+  assert.equal(turn.recap!.checks!.passed, 1);
+  assert.ok(events.includes("contract") && events.includes("checks"));
+  const { readProgress } = await import("../src/longtask.ts");
+  assert.equal(readProgress(home, `chat-${chat.id}`).contract!.goal, "Make ok.txt say yes");
+  const { existsSync } = await import("node:fs");
+  assert.ok(!existsSync(join(ws, "db/config.txt")));
+});
+
+test("progress survives turns and task runs; ask_user ends the turn with options", async () => {
+  const home = tempHome();
+  const h = await new Harness(home).init({ mcp: false });
+  const seen: string[] = [];
+  mock("main", (req) => {
+    const sys = req.messages[0].content ?? "";
+    seen.push(sys);
+    const lastUser = req.messages.findLastIndex((m) => m.role === "user");
+    const tools = req.messages.slice(lastUser).filter((m) => m.role === "tool").length;
+    if (/remember/.test(req.messages[lastUser].content ?? "") && !tools) return reply("", [call("note_progress", { decision: "snake_case fields in v2" })]);
+    if (/streaming/.test(req.messages[lastUser].content ?? "") && !tools) return reply("", [call("ask_user", { question: "Stream /v1/export or paginate it?", options: ["Stream", "Paginate"] })]);
+    return reply("ok");
+  });
+  const chat = store.createChat(home, {});
+  await h.chat(chat.id, "remember the naming rule");
+  const asked = await h.chat(chat.id, "what about streaming?");
+  assert.deepEqual(asked.question, { question: "Stream /v1/export or paginate it?", options: ["Stream", "Paginate"] });
+  assert.equal(asked.stopReason, "question");
+  assert.match(seen.at(-1)!, /snake_case fields in v2/);
+  // A scheduled task: the second run sees what the first one saved.
+  const task = store.upsertTask(home, { name: "nightly", prompt: "remember this", schedule: "0 3 * * *" });
+  await h.runTask(task.id);
+  store.patchTask(home, task.id, { prompt: "carry on" });
+  seen.length = 0;
+  await h.runTask(task.id);
+  assert.match(seen[0], /snake_case fields in v2/);
+});
+
+test("git checkpoints go to a side ref and leave the branch alone", async () => {
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { checkpointCommit, git } = await import("../src/repos.ts");
+  const dir = mkdtempSync(join(tmpdir(), "syph-ckpt-"));
+  const id = { name: "T", email: "t@example.com" };
+  await git(dir, ["init", "-q"]);
+  writeFileSync(join(dir, "a.txt"), "1");
+  await git(dir, ["add", "-A"]);
+  await git(dir, ["commit", "-qm", "init"], { identity: id });
+  assert.equal(await checkpointCommit(dir, "chat-x", "nothing", id), null);
+  writeFileSync(join(dir, "a.txt"), "2");
+  writeFileSync(join(dir, "new.txt"), "n");
+  const sha = await checkpointCommit(dir, "chat-x", "Checkpoint: step", id);
+  assert.ok(sha);
+  const status = (await git(dir, ["status", "--porcelain"])).stdout;
+  assert.match(status, /a\.txt/);
+  assert.match(status, /new\.txt/);
+  assert.match((await git(dir, ["show", "--stat", sha!])).stdout, /new\.txt/);
+  assert.equal((await git(dir, ["log", "--oneline"])).stdout.trim().split("\n").length, 1);
+});
