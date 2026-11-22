@@ -42,6 +42,14 @@ export function truncate(s: string, max: number) {
   return s.length <= max ? s : s.slice(0, max) + `\n…[truncated ${s.length - max} chars]`;
 }
 
+/** Keep the start and the end of a long output (errors and summaries are usually at the end). */
+export function headTail(s: string, max: number) {
+  if (s.length <= max) return s;
+  const head = Math.floor(max * 0.4);
+  const tail = max - head;
+  return `${s.slice(0, head)}\n…[${s.length - max} chars elided from the middle]…\n${s.slice(-tail)}`;
+}
+
 /** Parse a "---\nkey: value\n---\nbody" frontmatter block. Flat string values only. */
 export function parseFrontmatter(src: string): { meta: Record<string, string>; body: string } {
   const m = src.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);

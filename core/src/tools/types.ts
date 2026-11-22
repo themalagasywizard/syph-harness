@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import type { Home } from "../home.ts";
-import type { Proposal } from "../types.ts";
+import type { Contract, Proposal } from "../types.ts";
 import type { ProposalInput } from "../evolve/proposals.ts";
 
 export type Permission = "auto" | "ask" | "deny";
@@ -22,7 +22,17 @@ export interface ToolContext {
     runSubagent?: (prompt: string) => Promise<string>;
     /** Show the user the agent's plan for a multi-step task (a live checklist in the chat). */
     plan?: (steps: { text: string; status: "pending" | "in_progress" | "done" }[]) => void;
+    /** End the turn after this step's tools, showing the user a question with answer buttons (set by the loop). */
+    endTurn?: (q: { question: string; options: string[] }) => void;
+    /** Read and change the chat's contract (set by Harness). */
+    contract?: { get: () => Contract | undefined; set: (c: Contract) => void };
+    /** Record progress that must survive compaction and later sessions (set by Harness). */
+    progress?: (entry: { decision?: string; deadEnd?: string; blocked?: string; done?: string }) => string;
+    /** Make hidden connector or MCP tools available to this chat (set by Harness). */
+    loadTools?: (names: string[]) => void;
   };
+  /** Connector and MCP tool names this chat has loaded (lazy tools). */
+  loadedTools?: Set<string>;
 }
 
 export interface Tool<S extends z.ZodType = z.ZodType> {

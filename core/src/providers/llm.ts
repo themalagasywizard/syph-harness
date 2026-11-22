@@ -86,6 +86,7 @@ export async function complete(home: Home, call: LlmCall): Promise<LlmResult> {
     temperature: call.temperature ?? profile.temperature,
     maxTokens: call.maxTokens,
     jsonMode: call.jsonMode,
+    cache: resolved.provider === "openrouter" && /^(anthropic|google)\//.test(resolved.model),
     signal: call.signal,
     onToken: native || !call.tools?.length ? call.onToken : textToolStreamFilter(call.onToken),
   });
@@ -120,13 +121,16 @@ export function toTextToolMessages(messages: ChatMessage[], tools: ToolSpec[]): 
       out.push({ role: "assistant", content: [m.content, calls].filter(Boolean).join("\n") });
     } else if (m.role === "tool") {
       out.push({ role: "user", content: `<tool_result name="${m.name ?? ""}">\n${m.content}\n</tool_result>` });
-    } else out.push({ role: m.role, content: m.content });
+    } else out.push({ role: m.role, content: m.content, ...(m.images?.length ? { images: m.images } : {}) });
   }
   if (sysIdx < 0) out.unshift({ role: "system", content: toolPrompt(tools).trim() });
   // Merge consecutive user messages (several tool results) for models that require alternation.
   return out.reduce<ChatMessage[]>((acc, m) => {
     const prev = acc.at(-1);
-    if (prev && prev.role === "user" && m.role === "user") prev.content = `${prev.content}\n\n${m.content}`;
+    if (prev && prev.role === "user" && m.role === "user") {
+      prev.content = `${prev.content}\n\n${m.content}`;
+      if (m.images?.length) prev.images = [...(prev.images ?? []), ...m.images];
+    }
     else acc.push({ ...m });
     return acc;
   }, []);

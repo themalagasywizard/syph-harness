@@ -12,6 +12,8 @@ export interface ToolCall {
 export interface ChatMessage {
   role: Role;
   content: string | null;
+  /** Images for vision models (data: URLs), sent as content parts. Never stored in history. */
+  images?: string[];
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
@@ -21,7 +23,12 @@ export interface Usage {
   promptTokens: number;
   completionTokens: number;
   costUsd: number;
+  /** Prompt tokens served from the provider's cache (cheaper), when it reports them. */
+  cachedTokens?: number;
 }
+
+/** Why a run ended. "done": the model finished. The rest mean the work may be unfinished. */
+export type StopReason = "done" | "budget" | "repeated_error" | "question" | "checks_failed";
 
 /** Events streamed out of a run. The UI, traces and evals all consume the same stream. */
 export type AgentEvent =
@@ -36,8 +43,44 @@ export type AgentEvent =
   | { type: "message"; message: ChatMessage }
   | { type: "files"; files: FileRef[] }
   | { type: "plan"; steps: PlanStep[] }
+  | { type: "status"; step: number; contextTokens: number; contextWindow: number; usage: Usage; cachedTokens: number }
+  | { type: "steer"; text: string }
+  | { type: "contract"; contract: Contract }
+  | { type: "checks"; checks: CheckResult[] }
   | { type: "error"; error: string }
-  | { type: "run_end"; runId: string; content: string; usage: Usage; status: "ok" | "error" | "cancelled" };
+  | { type: "run_end"; runId: string; content: string; usage: Usage; status: "ok" | "error" | "cancelled"; stopReason?: StopReason };
+
+/** What "done" means for a task, written before the work starts. */
+export interface Contract {
+  goal: string;
+  /** Paths (globs, relative to the workspace) the work may change. Empty: anywhere in the workspace. */
+  scope: string[];
+  /** Paths that must not change. */
+  never: string[];
+  doneWhen: { text: string; command?: string }[];
+  /** Drafted but not yet approved by the user (long-task mode). */
+  draft?: boolean;
+  updatedAt: string;
+}
+
+/** One done-when check the harness ran itself. */
+export interface CheckResult {
+  text: string;
+  command?: string;
+  status: "pass" | "fail" | "skipped";
+  exitCode?: number | string;
+  output?: string;
+}
+
+/** What the run did, from facts the harness saw rather than the model's own words. */
+export interface Recap {
+  stopReason: StopReason;
+  filesChanged: number;
+  toolCalls: number;
+  failedCalls: number;
+  checks?: { passed: number; total: number };
+  unfinished: string[];
+}
 
 export interface ModelProfile {
   /** Model reference, "provider:model", e.g. "openrouter:deepseek/deepseek-v4-pro" or "ollama:qwen3:14b". */
@@ -54,6 +97,8 @@ export interface ModelProfile {
   fewShot: number;
   /** For the cascade strategy: model to escalate to. */
   escalateTo?: string;
+  /** Accepts images. Unset: guessed from the model name. */
+  vision?: boolean;
   costPerMTokIn?: number;
   costPerMTokOut?: number;
 }
@@ -79,11 +124,25 @@ export interface SyphConfig {
     yolo?: boolean;
     /** Also auto-approve those tools in scheduled Tasks, which otherwise decline them. */
     yoloTasks?: boolean;
+    /** Shell commands the user chose to always allow (exact text). */
+    allowCommands?: string[];
+    /** Command prefixes scheduled Tasks may run without asking, e.g. "npm test". */
+    taskCommands?: string[];
   };
   evolve: { samplesPerCase: number; maxAttempts: number; heldOutFraction: number };
   killSwitch: boolean;
   mcpServers: { name: string; command: string; args?: string[]; env?: Record<string, string> }[];
-  agent: { maxSteps: number };
+  agent: {
+    maxSteps: number;
+    /** Spend cap for one run, in USD (0: none). When hit, the run pauses and the user can Continue. */
+    maxUsdPerRun?: number;
+    /** Time cap for one run, in minutes (0: none). */
+    maxMinutes?: number;
+    /** Commit a linked repo after each plan step that finishes (never pushes). */
+    gitCheckpoints?: boolean;
+    /** Send connector and MCP tools only once the chat needs them (find_tools). */
+    lazyTools?: boolean;
+  };
   disabledExtensions?: string[];
   /** Connectors switched off on the Connectors page. */
   disabledConnectors?: string[];
@@ -127,6 +186,10 @@ export interface ChatRecord {
   turns: Turn[];
   /** Raw model-facing history (includes tool messages). */
   history: ChatMessage[];
+  /** What "done" means for the work in this chat. */
+  contract?: Contract;
+  /** Connector and MCP tools this chat has loaded with find_tools. */
+  loadedTools?: string[];
 }
 
 export interface Turn {
@@ -143,7 +206,28 @@ export interface Turn {
   plan?: PlanStep[];
   /** How long the answer took, start to finish. */
   durationMs?: number;
+  /** Why the run ended, when it wasn't simply finished. */
+  stopReason?: StopReason;
+  /** A question the agent asked with ask_user, with answer buttons. */
+  question?: { question: string; options: string[] };
+  /** Done-when checks the harness ran at the end. */
+  checks?: CheckResult[];
+  /** Facts about the run for the end-of-turn recap. */
+  recap?: Recap;
+  /** Messages the user sent while this answer was being worked on. */
+  steering?: string[];
+  /** Files the user attached to this message (user turns). */
+  attachments?: Attachment[];
+  usage?: Usage;
   createdAt: string;
+}
+
+export interface Attachment {
+  name: string;
+  /** Absolute path where it was saved. */
+  path: string;
+  kind: "image" | "document" | "text" | "other";
+  size: number;
 }
 
 export interface PlanStep {

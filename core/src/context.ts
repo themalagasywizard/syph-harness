@@ -27,10 +27,11 @@ export function corePromptPath(home: Home, profile: ModelProfile) {
 export function buildSystemPrompt(home: Home, input: ContextInput): string {
   const profile = getProfile(home, input.model);
   const budget = Math.max(2000, Math.floor(profile.contextWindow * 0.25));
+  // Stable parts first, so providers that cache prompt prefixes can reuse them turn after turn.
+  // Anything that changes per request (examples, the date, progress) goes at the end.
   const parts: string[] = [];
 
   parts.push((home.read(corePromptPath(home, profile)) ?? "").trim());
-  parts.push(`Today is ${new Date().toDateString()}. The user's computer runs ${platform()}.`);
 
   if (input.projectId) {
     const p = readJson<Project | null>(home.path("projects", input.projectId, "project.json"), null);
@@ -46,14 +47,33 @@ export function buildSystemPrompt(home: Home, input: ContextInput): string {
   const skills = listSkills(home);
   if (skills.length) parts.push(`# Skills\nCall read_skill(name) before using one.\n${clip(skills.map((s) => `- ${s.name}: ${s.description}`).join("\n"), budget * 0.15)}`);
 
+  if (input.connectors) parts.push(input.connectors);
+
+  parts.push(`Today is ${new Date().toDateString()}. The user's computer runs ${platform()}.`);
+
   if (profile.fewShot > 0 && input.query) {
     const ex = retrieve(home, input.query, profile.fewShot);
     if (ex.length) parts.push(`# Examples of good answers to similar requests\n${clip(ex.map((e) => `<example>\nRequest: ${e.input}\nAnswer: ${e.output}\n</example>`).join("\n"), budget * 0.3)}`);
   }
 
-  if (input.connectors) parts.push(input.connectors);
   if (input.extra) parts.push(input.extra);
   return parts.filter(Boolean).join("\n\n");
+}
+
+/** A short stand-in for a long tool result that the model has already acted on. */
+export function elideToolResult(content: string, keep = 1200, where = "") {
+  if (content.length <= keep * 1.5) return content;
+  return `${content.slice(0, keep)}\n…[${content.length - keep} more chars of this earlier result were dropped to save context${where}. Call the tool again if you need them.]`;
+}
+
+/**
+ * Replace all but the last `keepLast` tool results with short stubs. The calls stay, so the
+ * model still sees what it did; only the bulky output goes. Pure: returns a new list.
+ */
+export function shrinkToolResults(messages: ChatMessage[], keepLast: number, keep: number): ChatMessage[] {
+  const toolIdx = messages.flatMap((m, i) => (m.role === "tool" ? [i] : []));
+  const old = new Set(toolIdx.slice(0, Math.max(0, toolIdx.length - keepLast)));
+  return messages.map((m, i) => (old.has(i) && m.content ? { ...m, content: elideToolResult(m.content, keep) } : m));
 }
 
 /** Token estimate of a message list. */

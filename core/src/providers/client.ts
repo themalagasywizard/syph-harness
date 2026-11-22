@@ -10,8 +10,24 @@ export interface CompletionRequest {
   temperature?: number;
   maxTokens?: number;
   jsonMode?: boolean;
+  /** Mark cache breakpoints (Anthropic and Gemini through OpenRouter); other providers cache on their own. */
+  cache?: boolean;
   signal?: AbortSignal;
   onToken?: (t: string) => void;
+}
+
+/** Messages as they go on the wire: images become content parts, and cache breakpoints are marked. */
+export function wireMessages(messages: ChatMessage[], cache = false): unknown[] {
+  const lastUser = messages.findLastIndex((m) => m.role === "user");
+  return messages.map((m, i) => {
+    const { images, ...rest } = m;
+    const mark = cache && (m.role === "system" || i === lastUser) && typeof m.content === "string" && m.content.length > 0;
+    if (!images?.length && !mark) return rest;
+    const parts: Record<string, unknown>[] = [];
+    if (m.content) parts.push({ type: "text", text: m.content, ...(mark ? { cache_control: { type: "ephemeral" } } : {}) });
+    for (const url of images ?? []) parts.push({ type: "image_url", image_url: { url } });
+    return { ...rest, content: parts };
+  });
 }
 
 export interface CompletionResult {
@@ -19,6 +35,8 @@ export interface CompletionResult {
   toolCalls: ToolCall[];
   promptTokens: number;
   completionTokens: number;
+  /** Prompt tokens read from the provider's prompt cache, when reported. */
+  cachedTokens?: number;
   /** Cost reported by the provider (OpenRouter), if any. */
   costUsd?: number;
   finishReason?: string;
@@ -50,7 +68,7 @@ export const httpTransport: Transport = async (req) => {
 async function once(req: CompletionRequest): Promise<CompletionResult> {
   const body: Record<string, unknown> = {
     model: req.model,
-    messages: req.messages,
+    messages: wireMessages(req.messages, req.cache),
     stream: true,
     temperature: req.temperature,
     max_tokens: req.maxTokens,
@@ -77,7 +95,7 @@ async function once(req: CompletionRequest): Promise<CompletionResult> {
 
   let content = "";
   const calls = new Map<number, ToolCall>();
-  let promptTokens = 0, completionTokens = 0, costUsd: number | undefined, finishReason: string | undefined;
+  let promptTokens = 0, completionTokens = 0, cachedTokens = 0, costUsd: number | undefined, finishReason: string | undefined;
 
   const decoder = new TextDecoder();
   let buf = "";
@@ -115,9 +133,10 @@ async function once(req: CompletionRequest): Promise<CompletionResult> {
       if (json.usage) {
         promptTokens = json.usage.prompt_tokens ?? promptTokens;
         completionTokens = json.usage.completion_tokens ?? completionTokens;
+        cachedTokens = json.usage.prompt_tokens_details?.cached_tokens ?? cachedTokens;
         if (typeof json.usage.cost === "number") costUsd = json.usage.cost;
       }
     }
   }
-  return { content, toolCalls: [...calls.values()], promptTokens, completionTokens, costUsd, finishReason };
+  return { content, toolCalls: [...calls.values()], promptTokens, completionTokens, cachedTokens, costUsd, finishReason };
 }

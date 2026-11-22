@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSy
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { listSkills, readSkill, skillFile } from "../skills.ts";
-import { truncate } from "../util.ts";
+import { headTail, truncate } from "../util.ts";
 import { defineTool, type Tool, type ToolContext } from "./types.ts";
 
 /** Resolve a user path inside the workspace; refuse anything that escapes it. */
@@ -44,20 +44,26 @@ export const listFiles = defineTool({
   },
 });
 
+/** Lines read_file returns when no range is given: enough for most files, small enough to keep context lean. */
+export const READ_DEFAULT_LINES = 400;
+
 export const readFile = defineTool({
   name: "read_file",
-  description: "Read a text file from the workspace. Optionally a line range (1-based, inclusive).",
+  description: `Read a text file from the workspace. Without a range it returns the first ${READ_DEFAULT_LINES} lines and says how many there are; pass startLine/endLine (1-based, inclusive) for other parts.`,
   schema: z.object({ path: z.string(), startLine: z.number().int().positive().optional(), endLine: z.number().int().positive().optional() }),
   permission: "auto",
   run: ({ path, startLine, endLine }, ctx) => {
     const abs = inWorkspace(ctx, path);
-    if (!existsSync(abs)) return `Error: file not found: ${path}`;
-    let text = readFileSync(abs, "utf8");
-    if (startLine || endLine) {
-      const lines = text.split("\n");
-      text = lines.slice((startLine ?? 1) - 1, endLine ?? lines.length).join("\n");
-    }
-    return truncate(text, 60_000);
+    if (!existsSync(abs)) return `Error: file not found: ${path}. List its folder with list_files to see what is there.`;
+    if (statSync(abs).isDirectory()) return `Error: ${path} is a folder, not a file. Use list_files on it.`;
+    const text = readFileSync(abs, "utf8");
+    const lines = text.split("\n");
+    const from = startLine ?? 1;
+    const to = Math.min(lines.length, endLine ?? (startLine ? lines.length : READ_DEFAULT_LINES));
+    if (from > lines.length) return `Error: ${path} has only ${lines.length} lines; startLine ${from} is past the end.`;
+    const part = lines.slice(from - 1, to).join("\n");
+    const whole = from === 1 && to === lines.length;
+    return truncate(whole ? part : `[${path}: lines ${from}-${to} of ${lines.length}${to < lines.length ? `; read more with startLine=${to + 1}` : ""}]\n${part}`, 40_000);
   },
 });
 
@@ -115,7 +121,8 @@ export const searchFiles = defineTool({
         if (hits.length < 200 && (re ? re.test(line) : line.toLowerCase().includes(pattern.toLowerCase()))) hits.push(`${f}:${i + 1}: ${line.trim().slice(0, 200)}`);
       });
     }
-    return hits.length ? hits.join("\n") : "No matches.";
+    if (!hits.length) return `No matches for "${pattern}" in ${files.filter((f) => !f.endsWith("/")).length} files under ${path}.`;
+    return hits.length >= 200 ? `${hits.join("\n")}\n[stopped at 200 matches: narrow the pattern or the path]` : hits.join("\n");
   },
 });
 
@@ -126,7 +133,7 @@ export function runShell(command: string, cwd: string, timeoutMs: number, signal
   return new Promise<string>((res) => {
     const done = (err: any, stdout: string, stderr: string) => {
       const code = err ? (typeof err.code === "number" ? err.code : err.killed ? "timeout" : 1) : 0;
-      res(truncate(`exit code: ${code}\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`, 30_000));
+      res(`exit code: ${code}\n--- stdout ---\n${headTail(stdout, 10_000)}\n--- stderr ---\n${headTail(stderr, 4_000)}`);
     };
     const opts = { cwd, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, windowsHide: true, signal };
     if (WIN) execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command], opts, done);
@@ -142,17 +149,22 @@ export const shell = defineTool({
   run: ({ command, timeoutSec }, ctx) => runShell(command, ctx.workspace, timeoutSec * 1000, ctx.signal),
 });
 
+export const WEB_PAGE_CHARS = 12_000;
+
 export const webFetch = defineTool({
   name: "web_fetch",
-  description: "Fetch a web page or API URL and return its text (HTML is reduced to readable text).",
-  schema: z.object({ url: z.string().url() }),
+  description: `Fetch a web page or API URL and return its text (HTML is reduced to readable text), ${WEB_PAGE_CHARS} characters at a time. Pass offset to read further.`,
+  schema: z.object({ url: z.string().url(), offset: z.number().int().min(0).default(0) }),
   permission: "auto",
-  run: async ({ url }, ctx) => {
+  run: async ({ url, offset }, ctx) => {
     const res = await fetch(url, { signal: ctx.signal ?? AbortSignal.timeout(20_000), headers: { "user-agent": "Syph/0.1" } });
     const type = res.headers.get("content-type") ?? "";
     let text = await res.text();
     if (type.includes("html")) text = htmlToText(text);
-    return truncate(`HTTP ${res.status}\n${text}`, 40_000);
+    const part = text.slice(offset, offset + WEB_PAGE_CHARS);
+    const more = offset + WEB_PAGE_CHARS < text.length ? `\n[characters ${offset}-${offset + part.length} of ${text.length}; read more with offset=${offset + WEB_PAGE_CHARS}]` : "";
+    if (!res.ok) return `Error: HTTP ${res.status} from ${url}\n${part.slice(0, 2000)}`;
+    return `HTTP ${res.status}\n${part || "(the page has no text)"}${more}`;
   },
 });
 

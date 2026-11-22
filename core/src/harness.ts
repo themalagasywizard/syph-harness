@@ -6,7 +6,7 @@ import { GITHUB_API, github, listGithubRepos } from "./connectors/github.ts";
 import { activeRepo, allLinkedRepos, cloneAndLink, explainGitError, git, linkedRepos, repoPrompt, repoStatus, repoTools, setActiveRepo, unlinkRepo, type RepoHost } from "./repos.ts";
 import { planPrompt, updatePlanTool } from "./plan.ts";
 import { connectorAgentTools, connectorPrompt } from "./connectors/agent-tools.ts";
-import { buildSystemPrompt, compactHistory } from "./context.ts";
+import { buildSystemPrompt, compactHistory, elideToolResult } from "./context.ts";
 import { caseFromRun, evalHistory, listCases, runSuite } from "./evals/index.ts";
 import { evolveOnce, gate } from "./evolve/engine.ts";
 import { acceptProposal, createProposal, getProposal, listProposals, rejectProposal, rollbackProposal, save } from "./evolve/proposals.ts";
@@ -14,7 +14,7 @@ import { addExample } from "./examples.ts";
 import { exportDatasets } from "./export.ts";
 import { loadExtensions, type ExtensionReport } from "./extensions.ts";
 import { Home } from "./home.ts";
-import { addUsage, emptyUsage, runAgent } from "./loop.ts";
+import { addUsage, emptyUsage, runAgent, STEER_PREFIX } from "./loop.ts";
 import { connectMcp, type McpConnection } from "./mcp.ts";
 import { complete } from "./providers/llm.ts";
 import { getProfile, listModels, saveProfile } from "./providers/models.ts";
@@ -31,6 +31,13 @@ import { FileIndex, changedFiles, mentionedFiles, snapshot } from "./files/index
 import { actionAt, checkUi, fillTemplate, flattenItem, getUi, itemsFrom, uiAgentTools, uiPrompt, type UiButton, type UiEnv } from "./ui-ext.ts";
 import type { FileRef, RepoLink } from "./types.ts";
 import { resolve } from "node:path";
+
+/** Images are sent once, with the message they came with; history keeps the text that names them. */
+const stripImages = (m: ChatMessage): ChatMessage => {
+  if (!m.images) return m;
+  const { images: _drop, ...rest } = m;
+  return rest;
+};
 
 export interface Job {
   id: string;
@@ -459,11 +466,17 @@ export class Harness {
         emit: relay,
       });
       addUsage(usage, result.usage);
-      const kept = result.added.filter((m) => m.role === "tool" || (m.role === "assistant" && m.tool_calls?.length));
-      chat.history = [...history, ...kept, { role: "assistant", content: result.content }];
+      // What the next turn re-reads: the calls and what the user said mid-run, but only a stub of
+      // each tool's output (the full text stays in the trace). This is most of a long chat's tokens.
+      const kept = result.added
+        .filter((m) => m.role === "tool" || (m.role === "assistant" && m.tool_calls?.length) || (m.role === "user" && m.content?.startsWith(STEER_PREFIX)))
+        .map((m) => (m.role === "tool" ? { ...m, content: elideToolResult(m.content ?? "", 1500, ` (full output in run ${trace.runId})`) } : m));
+      chat.history = [...history.map(stripImages), ...kept, { role: "assistant", content: result.content }];
       turn.content = result.content;
+      if (result.stopReason !== "done") turn.stopReason = result.stopReason;
+      if (result.question) turn.question = result.question;
       trace.finish({ status: "ok", output: result.content, ...usage });
-      relay({ type: "run_end", runId: trace.runId, content: result.content, usage, status: "ok" });
+      relay({ type: "run_end", runId: trace.runId, content: result.content, usage, status: "ok", stopReason: result.stopReason });
     } catch (e) {
       const cancelled = opts.signal?.aborted;
       turn.content = cancelled ? "(stopped)" : `Something went wrong: ${(e as Error).message}`;

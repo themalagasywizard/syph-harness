@@ -6,10 +6,18 @@ import type { Permission, Tool, ToolContext } from "./types.ts";
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
   private overrides: Record<string, Permission> = {};
+  /** Tools left out of the specs until a chat loads them (connector and MCP tools). */
+  private lazy = new Set<string>();
 
-  constructor(tools: Tool[] = [], overrides: Record<string, Permission> = {}) {
+  constructor(tools: Tool[] = [], overrides: Record<string, Permission> = {}, lazy: Iterable<string> = []) {
     for (const t of tools) this.add(t);
     this.overrides = overrides;
+    this.lazy = new Set(lazy);
+  }
+
+  /** Tools that are hidden until loaded, and not yet loaded in `ctx`. */
+  hidden(ctx?: Pick<ToolContext, "loadedTools">) {
+    return this.list().filter((t) => this.lazy.has(t.name) && !ctx?.loadedTools?.has(t.name) && this.permissionOf(t) !== "deny");
   }
 
   add(t: Tool) {
@@ -35,12 +43,14 @@ export class ToolRegistry {
 
   /** Subset by name, e.g. for sub-agents or evals. */
   pick(names: string[]) {
-    return new ToolRegistry(this.list().filter((t) => names.includes(t.name)), this.overrides);
+    return new ToolRegistry(this.list().filter((t) => names.includes(t.name)), this.overrides, this.lazy);
   }
 
-  specs(): ToolSpec[] {
+  /** What the model is shown. Lazy tools appear once the chat has loaded them. */
+  specs(ctx?: Pick<ToolContext, "loadedTools">): ToolSpec[] {
+    const hidden = new Set(this.hidden(ctx).map((t) => t.name));
     return this.list()
-      .filter((t) => this.permissionOf(t) !== "deny")
+      .filter((t) => this.permissionOf(t) !== "deny" && !hidden.has(t.name))
       .map((t) => {
         const schema = (t.jsonSchema ? { ...t.jsonSchema } : z.toJSONSchema(t.schema, { io: "input" })) as Record<string, unknown>;
         delete schema.$schema;
@@ -68,7 +78,9 @@ export class ToolRegistry {
     const reason = perm === "ask" ? `Syph wants to run ${name}.` : tool.needsApproval?.(args, ctx) ?? null;
     if (reason && !(await ctx.approve(name, args, reason))) return { ok: false, result: "The user declined this action. Do not retry it; continue without it or ask what they prefer.", args };
     try {
-      return { ok: true, result: truncate(String(await tool.run(args, ctx)), 60_000), args };
+      const result = truncate(String(await tool.run(args, ctx)), 40_000);
+      // Loud failure: a tool that reports an error is a failed call, so the loop and the UI see it.
+      return { ok: !/^Error\b/.test(result), result, args };
     } catch (e) {
       return { ok: false, result: `Error: ${(e as Error).message}`, args };
     }
