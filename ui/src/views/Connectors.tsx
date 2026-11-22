@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, ChevronDown, ChevronRight, ExternalLink, LogOut, MessageSquarePlus, Plug, RotateCcw, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ExternalLink, Github, LogOut, MessageSquarePlus, Plug, RotateCcw, Trash2 } from "lucide-react";
 import { useApp } from "../App";
 import { Toggle } from "../components/Toggle";
 import { Markdown } from "../components/Markdown";
@@ -36,6 +36,7 @@ const STATE_LABEL: Record<Connector["state"], string> = { ready: "Connected", ne
 
 function Icon({ c }: { c: Connector }) {
   if (c.icon === "google") return <span className="g-mark" aria-hidden="true">G</span>;
+  if (c.icon === "github") return <Github size={20} />;
   return <Plug size={20} />;
 }
 

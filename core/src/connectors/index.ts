@@ -149,6 +149,8 @@ export class Connectors {
         s.fields[k] = v.trim();
       }
     }
+    // A new key means the account has to be checked again.
+    if (m.auth === "apiKey" && Object.keys(values ?? {}).some((k) => m.fields.some((f) => f.key === k && f.secret))) delete s.account;
     // New OAuth client details invalidate the old sign-in.
     if (m.auth === "oauth2" && Object.keys(values ?? {}).some((k) => k === (m.oauth?.clientIdField ?? "clientId"))) delete s.tokens;
     this.saveSecret(id, s);
@@ -160,6 +162,7 @@ export class Connectors {
     const get = (key: string) => this.secret(m.id).fields[key];
     const authed = async (url: string, init: RequestInit = {}, retry = true): Promise<Response> => {
       const headers = new Headers(init.headers);
+      for (const [k, v] of Object.entries(m.headers ?? {})) if (!headers.has(k)) headers.set(k, v);
       let target = url;
       if (m.auth === "oauth2") {
         headers.set("authorization", `Bearer ${await this.accessToken(m)}`);
@@ -338,13 +341,52 @@ export class Connectors {
   async reload() {
     this.loaded.clear();
     for (const m of this.manifests()) {
+      this.adoptFields(m);
       if (!this.isEnabled(m.id) || this.state(m) !== "ready") continue;
       try {
+        await this.checkAccount(m);
         this.loaded.set(m.id, { tools: await this.loadTools(m) });
       } catch (e) {
         this.loaded.set(m.id, { tools: [], error: (e as Error).message });
       }
     }
+  }
+
+  /**
+   * A built-in connector that replaced one with the same id (say a GitHub connector Syph wrote
+   * earlier) keeps the key the user already saved, even when the old one named its field differently.
+   */
+  private adoptFields(m: ConnectorManifest) {
+    if (!m.builtin) return;
+    const s = this.secret(m.id);
+    const missing = m.fields.filter((f) => f.required && !s.fields[f.key]);
+    const spare = Object.entries(s.fields).filter(([k]) => !m.fields.some((f) => f.key === k));
+    if (missing.length !== 1 || spare.length !== 1) return;
+    s.fields[missing[0].key] = spare[0][1];
+    delete s.fields[spare[0][0]];
+    delete s.account;
+    this.saveSecret(m.id, s);
+  }
+
+  /** apiKey connectors with an accountUrl: find out who the key belongs to, and refuse a key the app rejects. */
+  private async checkAccount(m: ConnectorManifest) {
+    if (m.auth !== "apiKey" || !m.accountUrl || this.secret(m.id).account) return;
+    let res: Response;
+    try {
+      res = await this.runtime(m).fetch(m.accountUrl, { signal: AbortSignal.timeout(10_000) });
+    } catch {
+      return; // offline: try again next time
+    }
+    if (res.status === 401) throw new Error(`${m.name} rejected the saved key. Paste a new one on the Connectors page.`);
+    if (!res.ok) return;
+    const info: any = await res.json().catch(() => ({}));
+    const account = info.login ?? info.email ?? info.name ?? info.username;
+    if (account) this.saveSecret(m.id, { ...this.secret(m.id), account: String(account) });
+  }
+
+  /** The account a connector is signed in as, if known. */
+  account(id: string) {
+    return this.secret(id).account;
   }
 
   tools(): Tool[] {

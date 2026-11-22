@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Check, ChevronDown, ChevronRight, Clock, Code2, Copy, Files, FlaskConical, FolderClosed, Lightbulb, LayoutTemplate, Moon, ShieldQuestion, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Zap } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, Clock, Code2, Copy, Files, FlaskConical, FolderClosed, Lightbulb, LayoutTemplate, ListChecks, Loader2, Moon, ShieldQuestion, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Wrench, Zap } from "lucide-react";
 import { Markdown } from "../components/Markdown";
 import { Mark } from "../components/Logo";
 import { CellLoader } from "../components/CellLoader";
 import { ModelPicker } from "../components/ModelPicker";
 import { useApp } from "../App";
-import { api, followChat, sendMessage, type AgentEvent, type Chat, type FileRef, type Proposal, type ToolCallView, type Turn } from "../api";
+import { api, followChat, sendMessage, type AgentEvent, type Chat, type FileRef, type PlanStep, type Proposal, type ToolCallView, type Turn } from "../api";
+import { ActiveRepoChip, RepoComposerMenu } from "../components/Repos";
 import { FileCard, FileIcon } from "../components/FilePreview";
 import { ExtIcon, Slot, type UiExtension } from "../ext";
 
@@ -35,6 +36,86 @@ function ToolBlock({ call }: { call: ToolCallView }) {
         {call.ms != null && <span className="ms">{call.ms}ms</span>}
       </button>
       {open && <pre className="tool-body">{call.result ?? "…"}</pre>}
+    </div>
+  );
+}
+
+/** A short name for a call: git shows its command, other tools their name. */
+function callLabel(c: ToolCallView) {
+  const a = (c.args ?? {}) as Record<string, any>;
+  if (c.name === "git" && Array.isArray(a.args)) return `git ${a.args.join(" ")}`.slice(0, 60);
+  if (c.name === "github_clone" && a.repo) return `clone ${a.repo}`;
+  if ((c.name === "read_file" || c.name === "write_file" || c.name === "edit_file") && a.path) return `${c.name} ${a.path}`.slice(0, 60);
+  return c.name;
+}
+
+export function fmtDuration(ms: number) {
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60_000);
+  return `${m}m ${Math.round((ms % 60_000) / 1000)}s`;
+}
+
+/** Seconds since `start`, ticking while it runs. */
+function useElapsed(start?: number) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!start) return;
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [start]);
+  return start ? now - start : 0;
+}
+
+/** Every tool call of an answer, folded into one line: how many, which, and how long it took. */
+function ToolGroup({ calls, live, startedAt, durationMs }: { calls: ToolCallView[]; live?: boolean; startedAt?: number; durationMs?: number }) {
+  const [open, setOpen] = useState(false);
+  const elapsed = useElapsed(live ? startedAt : undefined);
+  const visible = calls.filter((c) => c.name !== "update_plan");
+  if (!visible.length) return null;
+  const running = live ? visible.find((c) => c.ok === undefined) : undefined;
+  const failed = visible.filter((c) => c.ok === false).length;
+  const toolMs = visible.reduce((n, c) => n + (c.ms ?? 0), 0);
+  const ms = live && startedAt ? elapsed : durationMs ?? toolMs;
+  const counts = new Map<string, number>();
+  for (const c of visible) counts.set(c.name, (counts.get(c.name) ?? 0) + 1);
+  const names = [...counts].map(([n, k]) => (k > 1 ? `${n} ×${k}` : n)).join(", ");
+  return (
+    <div className={`tool-group ${open ? "open" : ""}`}>
+      <button className="tg-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        {running ? <Loader2 size={14} className="spin" /> : <Wrench size={14} />}
+        <span className="tg-title">{running ? <>Running <code>{callLabel(running)}</code></> : <>Used {visible.length} tool{visible.length === 1 ? "" : "s"}</>}</span>
+        <span className="tg-meta">
+          {running && <span>{visible.length} call{visible.length === 1 ? "" : "s"}</span>}
+          <span>{fmtDuration(ms)}</span>
+          {failed > 0 && <span className="bad">{failed} failed</span>}
+        </span>
+        {!open && !running && <span className="tg-names ellipsis">{names}</span>}
+      </button>
+      {open && <div className="tools">{visible.map((t) => <ToolBlock key={t.id} call={t} />)}</div>}
+    </div>
+  );
+}
+
+/** The agent's plan for a multi-step task, as a checklist that ticks off as it works. */
+function PlanCard({ steps, live }: { steps: PlanStep[]; live?: boolean }) {
+  const done = steps.filter((s) => s.status === "done").length;
+  return (
+    <div className={`plan ${done === steps.length ? "complete" : ""}`}>
+      <div className="plan-head">
+        <ListChecks size={16} /> <b>Plan</b>
+        <span className="hint">{done} of {steps.length} done</span>
+        <span className="plan-bar"><span style={{ width: `${(done / steps.length) * 100}%` }} /></span>
+      </div>
+      <ul>
+        {steps.map((s, i) => (
+          <li key={i} className={s.status}>
+            {s.status === "done" ? <CircleCheck size={16} /> : s.status === "in_progress" ? (live ? <Loader2 size={16} className="spin" /> : <CircleDot size={16} />) : <Circle size={16} />}
+            <span>{s.text}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -115,7 +196,7 @@ interface Approval {
   args: unknown;
 }
 
-function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note }: { turn: Turn; chatId?: string; streaming?: boolean; approval?: Approval | null; onApprove?: (allow: boolean) => void; note?: string }) {
+function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, startedAt }: { turn: Turn; chatId?: string; streaming?: boolean; approval?: Approval | null; onApprove?: (allow: boolean) => void; note?: string; startedAt?: number }) {
   const [rating, setRating] = useState(turn.rating);
   const [copied, setCopied] = useState(false);
   const [feedback, setFeedback] = useState<null | "open" | "saved">(null);
@@ -141,7 +222,8 @@ function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note }: {
         )}
       </div>
       <div className="body">
-        {!!turn.toolCalls?.length && <div className="tools">{turn.toolCalls.map((t) => <ToolBlock key={t.id} call={t} />)}</div>}
+        {!!turn.plan?.length && <PlanCard steps={turn.plan} live={streaming} />}
+        {!!turn.toolCalls?.length && <ToolGroup calls={turn.toolCalls} live={streaming} startedAt={startedAt} durationMs={turn.durationMs} />}
         {turn.toolCalls?.filter((t) => t.name === "propose_ui_change" && t.ok).map((t) => /\((pr_\w+)\)/.exec(t.result ?? "")?.[1]).filter(Boolean).map((pid) => <UiProposalCard key={pid} id={pid!} />)}
         {!!turn.files?.length && <FileList files={turn.files} />}
         {note && <div className="note">{note}</div>}
@@ -190,6 +272,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const [projectId, setProjectId] = useState<string | undefined>(initialProject);
   const [menu, setMenu] = useState(false);
   const [live, setLive] = useState<Turn | null>(null);
+  const [liveStart, setLiveStart] = useState<number>();
   const [note, setNote] = useState<string>();
   const [approval, setApproval] = useState<Approval | null>(null);
   const [pendingUser, setPendingUser] = useState<Turn | null>(null);
@@ -247,6 +330,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
     const ac = new AbortController();
     watchRef.current = ac;
     setLive({ id: "live", role: "assistant", content: "", toolCalls: [], createdAt: new Date().toISOString() });
+    setLiveStart(Date.now());
     setNote(undefined);
     setApproval(null);
     const onEvent = (e: AgentEvent) => {
@@ -254,6 +338,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
         if (!t) return t;
         switch (e.type) {
           case "run_start": return { ...t, model: e.model };
+          case "plan": return { ...t, plan: e.steps };
           case "token": return { ...t, content: t.content + e.text };
           case "tool_call": return { ...t, toolCalls: [...(t.toolCalls ?? []), { id: e.id, name: e.name, args: e.args }] };
           case "tool_result": return { ...t, toolCalls: t.toolCalls?.map((c) => (c.id === e.id ? { ...c, ok: e.ok, result: e.result, ms: e.ms } : c)) };
@@ -267,6 +352,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
           default: return t;
         }
       });
+      if (e.type === "run_start" && e.at) setLiveStart(e.at);
       if (e.type === "note" && e.text) setNote(e.text);
       if (e.type === "approval_request") setApproval({ id: e.id, tool: e.tool, args: e.args });
       if (e.type === "approval_done" || e.type === "tool_result") setApproval((a) => (a && (e.type !== "approval_done" || a.id === e.id) ? null : a));
@@ -318,6 +404,17 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
     }
   };
 
+  /** Linking a repo to "this chat" before the first message: make the chat now, without leaving the page. */
+  const ensureChat = async () => {
+    if (cid) return cid;
+    const c = await api.post<Chat>("/chats", { projectId, model });
+    setCid(c.id);
+    setChat(c);
+    history.replaceState(null, "", `#/chat/${c.id}`);
+    refresh();
+    return c.id;
+  };
+
   const stop = () => cid && api.post(`/chats/${cid}/stop`);
   const toggleYolo = async () => {
     await api.put("/settings", { approval: { yolo: !yolo } });
@@ -341,6 +438,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
       <div className="topbar">
         <span className="title ellipsis">{chat?.title && chat.title !== "New chat" ? chat.title : ""}</span>
         <div className="spacer" />
+        <ActiveRepoChip chatId={cid} projectId={projectId} />
         <Slot name="chat.header" ctx={slotCtx} />
         {chatFiles.length > 0 && (
           <div className="model-menu">
@@ -380,7 +478,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
           ) : (
             <>
               {turns.map((t) => (t.role === "user" ? <div key={t.id} className="msg user"><div className="bubble">{t.content}</div></div> : <AssistantTurn key={t.id} turn={t} chatId={chat?.id} />))}
-              {live && <AssistantTurn turn={live} streaming approval={approval} onApprove={answer} note={note} />}
+              {live && <AssistantTurn turn={live} streaming approval={approval} onApprove={answer} note={note} startedAt={liveStart} />}
             </>
           )}
         </div>
@@ -421,6 +519,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
                 </div>
               )}
             </div>
+            <RepoComposerMenu chatId={cid} projectId={projectId} ensureChat={ensureChat} />
             <button className={`pill yolo ${yolo ? "on" : ""}`} onClick={toggleYolo} title={yolo ? "YOLO is on: shell (PowerShell) and other ask-first tools run without asking. Click to turn off." : "Turn on YOLO: run shell (PowerShell) and other ask-first tools without asking."}>
               <Zap size={15} fill={yolo ? "currentColor" : "none"} /> {yolo ? "YOLO on" : "Ask first"}
             </button>

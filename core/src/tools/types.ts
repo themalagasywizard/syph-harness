@@ -20,6 +20,8 @@ export interface ToolContext {
   hooks: {
     createTask?: (t: { name: string; prompt: string; schedule: string; projectId?: string }) => { id: string };
     runSubagent?: (prompt: string) => Promise<string>;
+    /** Show the user the agent's plan for a multi-step task (a live checklist in the chat). */
+    plan?: (steps: { text: string; status: "pending" | "in_progress" | "done" }[]) => void;
   };
 }
 

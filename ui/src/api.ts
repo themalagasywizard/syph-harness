@@ -19,7 +19,14 @@ export interface Turn {
   toolCalls?: ToolCallView[];
   rating?: "up" | "down";
   files?: FileRef[];
+  plan?: PlanStep[];
+  durationMs?: number;
   createdAt: string;
+}
+
+export interface PlanStep {
+  text: string;
+  status: "pending" | "in_progress" | "done";
 }
 
 export interface FileRef {
@@ -39,6 +46,38 @@ export interface RepoLink {
   connectedAt: string;
 }
 
+export interface RepoStatus extends RepoLink {
+  scope: "project" | "chat";
+  exists: boolean;
+  branch?: string;
+  dirty?: number;
+  ahead?: number;
+  behind?: number;
+  upstream?: string;
+  active?: boolean;
+  error?: string;
+}
+
+export interface GithubState {
+  connected: boolean;
+  account?: string;
+  state: string;
+  error?: string;
+}
+
+export interface GithubRepo {
+  full_name: string;
+  name: string;
+  owner: string;
+  private: boolean;
+  description: string;
+  default_branch: string;
+  html_url: string;
+  pushed_at: string;
+  fork: boolean;
+  archived: boolean;
+}
+
 export interface ChatSummary {
   id: string;
   title: string;
@@ -51,6 +90,8 @@ export interface ChatSummary {
 
 export interface Chat extends ChatSummary {
   turns: Turn[];
+  repos?: RepoLink[];
+  activeRepo?: string;
   running?: boolean;
 }
 
@@ -166,6 +207,8 @@ export interface AppState {
   extensions: { name: string; ok: boolean; error?: string; tools: string[] }[];
   mcp: { name: string; tools: string[]; error?: string }[];
   homePath: string;
+  workspacePath?: string;
+  github?: GithubState;
 }
 
 export interface EvalSummary {
@@ -178,7 +221,7 @@ export interface EvalSummary {
 }
 
 export type AgentEvent =
-  | { type: "run_start"; runId: string; model: string; strategy: string }
+  | { type: "run_start"; runId: string; model: string; strategy: string; at?: number }
   | { type: "token"; text: string }
   | { type: "tool_call"; id: string; name: string; args: unknown }
   | { type: "tool_result"; id: string; name: string; ok: boolean; result: string; ms: number }
@@ -186,6 +229,7 @@ export type AgentEvent =
   | { type: "approval_done"; id: string; allow: boolean; auto?: boolean }
   | { type: "idle" }
   | { type: "files"; files: FileRef[] }
+  | { type: "plan"; steps: PlanStep[] }
   | { type: "note"; text: string; reset?: boolean }
   | { type: "error"; error: string }
   | { type: "run_end"; runId: string; content: string; status: string; usage: { promptTokens: number; completionTokens: number; costUsd: number } }

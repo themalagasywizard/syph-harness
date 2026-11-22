@@ -40,6 +40,10 @@ export interface ConnectorManifest {
    * { header: "Authorization", value: "Bearer {apiKey}" } or { query: "key", value: "{apiKey}" }.
    */
   apiKeyAuth?: { header?: string; query?: string; value: string };
+  /** apiKey connectors: a URL that returns the signed-in account (checked when keys change; a 401 marks the key as rejected). */
+  accountUrl?: string;
+  /** Headers every call needs (e.g. GitHub's Accept and User-Agent). */
+  headers?: Record<string, string>;
   /** Step-by-step setup for the user, in Markdown. */
   setup?: string;
   builtin?: boolean;

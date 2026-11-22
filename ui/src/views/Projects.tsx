@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Clock, Eye, FolderClosed, FolderGit2, FolderOpen, MessageSquare, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Clock, Eye, FolderClosed, FolderOpen, MessageSquare, Plus, Trash2 } from "lucide-react";
 import { useApp } from "../App";
 import { api, relTime, type Project, type ProjectDetail } from "../api";
 import { FileIcon, FileActions, revealFile } from "../components/FilePreview";
 import { Slot } from "../ext";
+import { ProjectRepos } from "../components/Repos";
 
 export function ProjectsView({ projectId }: { projectId?: string }) {
   const { state, go, refresh } = useApp();
@@ -124,18 +125,7 @@ function ProjectDetailView({ id }: { id: string }) {
           <code title={p.folder}>{p.folder}</code>
           <button className="btn ghost sm" onClick={() => revealFile(p.folder)}>Open folder</button>
         </div>
-        {!!p.repos?.length && (
-          <div className="proj-repos">
-            {p.repos.map((r) => (
-              <div key={r.path} className="repo-row">
-                <FolderGit2 size={16} />
-                <a href={r.url} target="_blank" rel="noreferrer" className="name">{r.name}</a>
-                <code className="hint ellipsis" title={r.path}>{r.path}</code>
-                <button className="btn ghost sm" onClick={() => revealFile(r.path)}><FolderOpen size={14} /> Show</button>
-              </div>
-            ))}
-          </div>
-        )}
+        <ProjectRepos projectId={id} />
 
         <div className="tabs">
           {(["chats", "instructions", "files", "tasks"] as const).map((t) => (

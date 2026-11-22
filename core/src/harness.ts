@@ -2,6 +2,9 @@
 // together. The server and CLI are thin layers over this class.
 import { Connectors } from "./connectors/index.ts";
 import { googleWorkspace } from "./connectors/google.ts";
+import { GITHUB_API, github, listGithubRepos } from "./connectors/github.ts";
+import { activeRepo, allLinkedRepos, cloneAndLink, explainGitError, git, linkedRepos, repoPrompt, repoStatus, repoTools, setActiveRepo, unlinkRepo, type RepoHost } from "./repos.ts";
+import { planPrompt, updatePlanTool } from "./plan.ts";
 import { connectorAgentTools, connectorPrompt } from "./connectors/agent-tools.ts";
 import { buildSystemPrompt, compactHistory } from "./context.ts";
 import { caseFromRun, evalHistory, listCases, runSuite } from "./evals/index.ts";
@@ -22,14 +25,12 @@ import { builtinTools } from "./tools/builtin.ts";
 import { ToolRegistry } from "./tools/registry.ts";
 import type { Tool, ToolContext } from "./tools/types.ts";
 import { Trace, addRating, listRuns } from "./trace.ts";
-import type { AgentEvent, ChatMessage, Task, Turn } from "./types.ts";
+import type { AgentEvent, ChatMessage, ChatRecord, PlanStep, Task, Turn } from "./types.ts";
 import { id, now } from "./util.ts";
 import { FileIndex, changedFiles, mentionedFiles, snapshot } from "./files/index.ts";
 import { actionAt, checkUi, fillTemplate, flattenItem, getUi, itemsFrom, uiAgentTools, uiPrompt, type UiButton, type UiEnv } from "./ui-ext.ts";
 import type { FileRef, RepoLink } from "./types.ts";
-import { execFile } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { resolve } from "node:path";
 
 export interface Job {
   id: string;
@@ -51,7 +52,9 @@ interface LiveRun {
 }
 
 /** Tools that never write files, so there is nothing to look for after them. */
-const READ_ONLY_TOOLS = new Set(["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_connectors", "list_ui", "propose_ui_change", "propose_skill", "propose_memory", "create_task", "create_connector"]);
+const READ_ONLY_TOOLS = new Set(["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_connectors", "list_ui", "propose_ui_change", "propose_skill", "propose_memory", "create_task", "create_connector", "update_plan", "list_repos", "github_repos", "github_api", "github_pr_create"]);
+/** Tools that change many files the agent didn't write (a clone, a pull, a checkout): not shown as files it made. */
+const QUIET_FILE_TOOLS = new Set(["git", "github_clone"]);
 
 export class Harness {
   readonly home: Home;
@@ -69,7 +72,7 @@ export class Harness {
 
   constructor(home?: Home | string) {
     this.home = home instanceof Home ? home : new Home(home);
-    this.connectors = new Connectors(this.home, [googleWorkspace]);
+    this.connectors = new Connectors(this.home, [googleWorkspace, github]);
   }
 
   async init(opts: { scheduler?: boolean; mcp?: boolean } = {}) {
@@ -110,7 +113,104 @@ export class Harness {
 
   tools(): ToolRegistry {
     const connectorTools = [...connectorAgentTools(this.connectors, () => this.broadcast({ type: "connectors" })), ...this.connectors.tools()];
-    return new ToolRegistry([...builtinTools, ...this.extTools, ...connectorTools, ...uiAgentTools(this.home, () => this.uiEnv()), ...this.mcp.flatMap((m) => m.tools)], this.home.config().toolPermissions ?? {});
+    return new ToolRegistry([...builtinTools, updatePlanTool, ...this.extTools, ...connectorTools, ...repoTools(this.repoHost), ...uiAgentTools(this.home, () => this.uiEnv()), ...this.mcp.flatMap((m) => m.tools)], this.home.config().toolPermissions ?? {});
+  }
+
+  // ---------- GitHub and linked repositories ----------
+
+  private ghIdentity?: { name: string; email: string } | null;
+
+  /** The GitHub connector, when it is set up and switched on. */
+  private githubRuntime() {
+    const m = this.connectors.manifests().find((x) => x.id === "github");
+    if (!m || !this.connectors.isEnabled("github") || this.connectors.state(m) !== "ready") return null;
+    return this.connectors.runtime(m);
+  }
+
+  private _repoHost?: RepoHost;
+  get repoHost(): RepoHost {
+    return (this._repoHost ??= this.makeRepoHost());
+  }
+
+  private makeRepoHost = (): RepoHost => ({
+    home: this.home,
+    token: async () => (this.githubRuntime() ? this.connectors.bearerToken("github").catch(() => null) : null),
+    identity: async () => {
+      if (this.ghIdentity !== undefined) return this.ghIdentity;
+      const g = this.githubRuntime();
+      if (!g) return null;
+      try {
+        const u = await g.json(`${GITHUB_API}/user`);
+        this.ghIdentity = { name: u.name || u.login, email: `${u.id}+${u.login}@users.noreply.github.com` };
+      } catch {
+        return null;
+      }
+      return this.ghIdentity;
+    },
+    changed: () => this.broadcast({ type: "chats" }),
+    yolo: () => !!this.home.config().approval?.yolo,
+  });
+
+  /** GitHub as the UI sees it: connected or not, and as whom. */
+  githubState() {
+    const c = this.connectors.list().find((x) => x.id === "github");
+    return { connected: !!c && c.enabled && c.state === "ready", account: c?.account, state: c ? (c.enabled ? c.state : "off") : "missing", error: c?.error };
+  }
+
+  async githubRepos(query?: string) {
+    const g = this.githubRuntime();
+    if (!g) throw Object.assign(new Error("Connect GitHub first: open Connectors and paste a token."), { status: 400 });
+    return listGithubRepos(g, { query, max: 300 });
+  }
+
+  linkRepo(input: { repo: string; name?: string; scope?: "project" | "chat"; projectId?: string; chatId?: string }) {
+    return cloneAndLink(this.repoHost, input);
+  }
+
+  unlinkRepo(target: { projectId?: string; chatId?: string }, path: string) {
+    unlinkRepo(this.home, target, path);
+    this.broadcast({ type: "chats" });
+    return { ok: true };
+  }
+
+  setActiveRepo(chatId: string, path: string | null) {
+    setActiveRepo(this.home, chatId, path);
+    this.broadcast({ type: "chats" });
+    return { ok: true };
+  }
+
+  /** Linked repos with their branch and changes, for a chat or project. */
+  async repoStatuses(target: { projectId?: string; chatId?: string }) {
+    const chat = target.chatId ? store.getChat(this.home, target.chatId) : null;
+    const active = activeRepo(this.home, chat, target.projectId);
+    const rows = await Promise.all(linkedRepos(this.home, target).map(repoStatus));
+    return rows.map((r) => ({ ...r, active: !!active && resolve(active.path) === resolve(r.path) }));
+  }
+
+  /** Push a linked repo's current branch from the UI (sets the upstream the first time; never forces). */
+  async pushRepo(path: string) {
+    const r = allLinkedRepos(this.home).find((x) => resolve(x.path) === resolve(path));
+    if (!r) throw Object.assign(new Error("That folder isn't a linked repo."), { status: 404 });
+    const token = r.url.startsWith("https://github.com/") ? await this.repoHost.token() : null;
+    const st = await repoStatus(r);
+    const args = st.upstream ? ["push"] : ["push", "-u", "origin", "HEAD"];
+    const out = await git(r.path, args, { token }).catch((e) => {
+      throw Object.assign(new Error(explainGitError((e as Error).message)), { status: 400 });
+    });
+    this.broadcast({ type: "chats" });
+    return { ok: true, output: [out.stdout, out.stderr].join("\n").trim(), status: await repoStatus(r) };
+  }
+
+  /** Pull (fast-forward only) a linked repo from the UI. */
+  async pullRepo(path: string) {
+    const r = allLinkedRepos(this.home).find((x) => resolve(x.path) === resolve(path));
+    if (!r) throw Object.assign(new Error("That folder isn't a linked repo."), { status: 404 });
+    const token = r.url.startsWith("https://github.com/") ? await this.repoHost.token() : null;
+    const out = await git(r.path, ["pull", "--ff-only"], { token }).catch((e) => {
+      throw Object.assign(new Error(explainGitError((e as Error).message)), { status: 400 });
+    });
+    this.broadcast({ type: "chats" });
+    return { ok: true, output: [out.stdout, out.stderr].join("\n").trim(), status: await repoStatus(r) };
   }
 
   /** What interface changes may refer to: connectors that exist, and tools that only read. */
@@ -120,11 +220,12 @@ export class Harness {
     return { connectors: new Set(this.connectors.manifests().map((m) => m.id)), readTools };
   }
 
-  /** The system prompt section about connectors, the interface and the project's repos. */
-  private appPrompt(projectId?: string) {
-    const parts = [connectorPrompt(this.connectors), uiPrompt, `# Files you make\nYour workspace folder is ${store.workspaceFor(this.home, projectId)}. Save documents, decks, sheets and other deliverables inside it (for example in reports/): every file you create or change there appears in the chat with a preview, its full path and Open / Show in folder buttons. When you finish, name the file and its full path.`];
-    const repos = projectId ? store.getProject(this.home, projectId)?.repos ?? [] : [];
-    if (repos.length) parts.push(`# Connected repositories\n${repos.map((r) => `- ${r.name} (${r.url}) is cloned at ${r.path}. Use shell with git there; the file tools reach it as ${r.name}/.`).join("\n")}`);
+  /** The system prompt section about connectors, the interface, plans and the chat's repos. */
+  private async appPrompt(projectId?: string, chat?: ChatRecord | null) {
+    const parts = [connectorPrompt(this.connectors), uiPrompt, planPrompt, `# Files you make\nYour workspace folder is ${store.workspaceFor(this.home, projectId)}. Save documents, decks, sheets and other deliverables inside it (for example in reports/): every file you create or change there appears in the chat with a preview, its full path and Open / Show in folder buttons. When you finish, name the file and its full path.`];
+    const gh = this.githubState();
+    parts.push(await repoPrompt(this.home, chat ?? null, projectId));
+    parts.push(gh.connected ? `GitHub is connected${gh.account ? ` as ${gh.account}` : ""}: handle it yourself with github_repos, github_clone, git, github_pr_create and github_api.` : "GitHub isn't connected, so only public repos can be cloned. If the user wants their own repos, ask them to open Connectors → GitHub and paste a token.");
     return parts.join("\n\n");
   }
 
@@ -229,7 +330,7 @@ export class Harness {
     }
   }
 
-  private toolContext(runId: string, opts: { projectId?: string; chatId?: string; approve: ToolContext["approve"]; signal?: AbortSignal; model: string; depth?: number }): ToolContext {
+  private toolContext(runId: string, opts: { projectId?: string; chatId?: string; approve: ToolContext["approve"]; signal?: AbortSignal; model: string; depth?: number; onPlan?: (steps: PlanStep[]) => void }): ToolContext {
     return {
       home: this.home,
       workspace: store.workspaceFor(this.home, opts.projectId),
@@ -244,6 +345,7 @@ export class Harness {
         return p;
       },
       hooks: {
+        plan: opts.onPlan,
         createTask: (t) => {
           const task = store.upsertTask(this.home, { ...t, model: undefined });
           this.broadcast({ type: "task", task });
@@ -255,12 +357,12 @@ export class Harness {
             : async (prompt) => {
                 const tools = this.tools();
                 tools.remove("run_subagent");
-                const ctx = this.toolContext(runId, { ...opts, depth: (opts.depth ?? 0) + 1 });
+                const ctx = this.toolContext(runId, { ...opts, depth: (opts.depth ?? 0) + 1, onPlan: undefined });
                 const res = await runAgent({
                   home: this.home,
                   model: opts.model,
                   messages: [
-                    { role: "system", content: buildSystemPrompt(this.home, { model: opts.model, projectId: opts.projectId, query: prompt, extra: "You are a sub-agent. Do the task and reply with a complete, self-contained result.", connectors: this.appPrompt(opts.projectId) }) },
+                    { role: "system", content: buildSystemPrompt(this.home, { model: opts.model, projectId: opts.projectId, query: prompt, extra: "You are a sub-agent. Do the task and reply with a complete, self-contained result.", connectors: await this.appPrompt(opts.projectId, opts.chatId ? store.getChat(this.home, opts.chatId) : null) }) },
                     { role: "user", content: prompt },
                   ],
                   tools,
@@ -298,6 +400,10 @@ export class Harness {
     const files = new Map<string, FileRef>();
     const trackFiles = (e: Extract<AgentEvent, { type: "tool_result" }>) => {
       if (READ_ONLY_TOOLS.has(e.name)) return;
+      if (QUIET_FILE_TOOLS.has(e.name)) {
+        snap = snapshot(workspace);
+        return;
+      }
       const next = snapshot(workspace);
       const found = changedFiles(workspace, snap, next);
       snap = next;
@@ -325,7 +431,7 @@ export class Harness {
         }
       }
     };
-    relay({ type: "run_start", runId: trace.runId, model, strategy: profile.strategy });
+    relay({ type: "run_start", runId: trace.runId, model, strategy: profile.strategy, at: started });
 
     const usage = emptyUsage();
     try {
@@ -335,8 +441,12 @@ export class Harness {
         addUsage(usage, r);
         return r.content;
       });
-      const system = buildSystemPrompt(this.home, { model, projectId: chat.projectId, query: text, connectors: this.appPrompt(chat.projectId) });
-      const ctx = this.toolContext(trace.runId, { projectId: chat.projectId, chatId, approve: opts.approve ?? this.interactiveApprove(relay, opts.signal, chatId), signal: opts.signal, model });
+      const system = buildSystemPrompt(this.home, { model, projectId: chat.projectId, query: text, connectors: await this.appPrompt(chat.projectId, chat) });
+      const onPlan = (steps: PlanStep[]) => {
+        turn.plan = steps;
+        relay({ type: "plan", steps });
+      };
+      const ctx = this.toolContext(trace.runId, { projectId: chat.projectId, chatId, approve: opts.approve ?? this.interactiveApprove(relay, opts.signal, chatId), signal: opts.signal, model, onPlan });
       const result = await getStrategy(profile.strategy).run({
         home: this.home,
         model,
@@ -362,6 +472,7 @@ export class Harness {
       relay({ type: "error", error: turn.content });
       relay({ type: "run_end", runId: trace.runId, content: turn.content, usage, status: cancelled ? "cancelled" : "error" });
     }
+    turn.durationMs = Date.now() - started;
     const fresh = store.getChat(this.home, chatId);
     if (!fresh) return turn; // deleted while it ran
     fresh.turns = [...chat.turns, turn];
@@ -540,7 +651,7 @@ export class Harness {
   }
 
   /** Clone a repository into the project's folder and connect it to the project. */
-  async uiClone(extId: string, elementId: string, step: number, vars: Record<string, unknown>, projectId?: string): Promise<{ repo: RepoLink; already: boolean }> {
+  async uiClone(extId: string, elementId: string, step: number, vars: Record<string, unknown>, projectId?: string, chatId?: string): Promise<{ repo: RepoLink; already: boolean }> {
     const action = actionAt(this.uiButton(extId, elementId), step);
     if (action?.type !== "clone_repo") throw Object.assign(new Error("That step isn't a clone."), { status: 400 });
     const url = fillTemplate(action.url, vars, true);
@@ -551,36 +662,10 @@ export class Harness {
       throw new Error(`Not a repository URL: ${url}`);
     }
     if (u.protocol !== "https:" || !action.hosts.includes(u.hostname)) throw new Error(`Only https:// repositories on ${action.hosts.join(", ")} can be cloned here.`);
-    const name = (fillTemplate(action.name ?? "", vars) || u.pathname.split("/").pop() || "repo").replace(/\.git$/, "").replace(/[^\w.-]+/g, "-").slice(0, 80) || "repo";
-    const base = store.workspaceFor(this.home, projectId);
-    const dir = join(base, name);
-    const plain = `${u.origin}${u.pathname}`;
-    const repo: RepoLink = { name, url: plain, path: dir, connector: action.connector, connectedAt: now() };
-    let already = false;
-    if (existsSync(dir) && readdirSync(dir).length) {
-      if (!existsSync(join(dir, ".git"))) throw new Error(`${dir} already exists and isn't a git repository. Rename or remove it first.`);
-      already = true;
-    } else {
-      const token = action.connector ? await this.connectors.bearerToken(action.connector).catch(() => null) : null;
-      const args = ["-c", "credential.helper=", "-c", "core.askPass="];
-      // The token goes in a header for this host only, never into the repo's saved config.
-      if (token) args.push("-c", `http.${u.origin}/.extraheader=AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`);
-      args.push("clone", "--", plain, dir);
-      await new Promise<void>((resolve, reject) =>
-        execFile("git", args, { timeout: 15 * 60_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" } }, (err, _out, stderr) => {
-          if (!err) return resolve();
-          const msg = (err as NodeJS.ErrnoException).code === "ENOENT" ? "Git isn't installed on this computer. Install it from https://git-scm.com/download/win and try again." : (stderr || err.message).split(token ?? "\u0000").join("•••").trim().slice(0, 800);
-          reject(new Error(msg));
-        }),
-      );
-    }
-    if (projectId) {
-      const p = store.getProject(this.home, projectId);
-      if (p) store.updateProject(this.home, projectId, { repos: [...(p.repos ?? []).filter((r) => r.path !== dir), repo] });
-    }
-    new FileIndex(this.home).add([dir]);
-    this.broadcast({ type: "chats" });
-    return { repo, already };
+    const name = fillTemplate(action.name ?? "", vars) || undefined;
+    const r = await cloneAndLink(this.repoHost, { repo: `${u.origin}${u.pathname}`, name, projectId, chatId, scope: projectId ? "project" : "chat" });
+    new FileIndex(this.home).add([r.repo.path]);
+    return r;
   }
 
   // ---------- Read models for the UI ----------

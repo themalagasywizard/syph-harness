@@ -25,7 +25,7 @@ export interface Usage {
 
 /** Events streamed out of a run. The UI, traces and evals all consume the same stream. */
 export type AgentEvent =
-  | { type: "run_start"; runId: string; model: string; strategy: string }
+  | { type: "run_start"; runId: string; model: string; strategy: string; at?: number }
   | { type: "token"; text: string }
   | { type: "tool_call"; id: string; name: string; args: unknown }
   | { type: "tool_result"; id: string; name: string; ok: boolean; result: string; ms: number }
@@ -35,6 +35,7 @@ export type AgentEvent =
   | { type: "note"; text: string; reset?: boolean }
   | { type: "message"; message: ChatMessage }
   | { type: "files"; files: FileRef[] }
+  | { type: "plan"; steps: PlanStep[] }
   | { type: "error"; error: string }
   | { type: "run_end"; runId: string; content: string; usage: Usage; status: "ok" | "error" | "cancelled" };
 
@@ -116,6 +117,10 @@ export interface ChatRecord {
   title: string;
   projectId?: string;
   model?: string;
+  /** Repositories linked to this chat only (a chat also works on its project's repos). */
+  repos?: RepoLink[];
+  /** Folder of the repo this chat is working on now (defaults to the last one linked). */
+  activeRepo?: string;
   createdAt: string;
   updatedAt: string;
   /** Display messages: user + assistant turns with the tool calls that happened in between. */
@@ -134,7 +139,16 @@ export interface Turn {
   rating?: "up" | "down";
   /** Files this answer created or changed, with their full path on disk. */
   files?: FileRef[];
+  /** The step-by-step plan the agent kept for a multi-step task, as it ended. */
+  plan?: PlanStep[];
+  /** How long the answer took, start to finish. */
+  durationMs?: number;
   createdAt: string;
+}
+
+export interface PlanStep {
+  text: string;
+  status: "pending" | "in_progress" | "done";
 }
 
 export interface FileRef {

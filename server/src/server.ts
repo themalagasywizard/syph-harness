@@ -62,6 +62,7 @@ export function createApp(h: Harness, opts: { uiDir?: string } = {}) {
       mcp: h.mcpStatus(),
       homePath: home.root,
       workspacePath: store.workspaceFor(home),
+      github: h.githubState(),
     };
   });
   route("GET", "/api/models", () => h.models());
@@ -234,6 +235,24 @@ export function createApp(h: Harness, opts: { uiDir?: string } = {}) {
     return [...all.values()].reverse();
   });
 
+  // ----- GitHub and the repos linked to projects and chats -----
+  const qs = (req: IncomingMessage) => new URL(req.url ?? "/", "http://x").searchParams;
+  const target = (src: { get(k: string): string | null | undefined } | any) => {
+    const get = (k: string) => (typeof src?.get === "function" ? src.get(k) : src?.[k]) || undefined;
+    return { projectId: get("projectId") as string | undefined, chatId: get("chatId") as string | undefined };
+  };
+  route("GET", "/api/github", () => h.githubState());
+  route("GET", "/api/github/repos", (req) => h.githubRepos(qs(req).get("q") ?? undefined));
+  route("GET", "/api/repos", (req) => h.repoStatuses(target(qs(req))));
+  route("POST", "/api/repos/link", async (_q, _s, _p, body) => {
+    if (!body?.repo || typeof body.repo !== "string") throw httpError(400, "Which repo? Send owner/name or a URL.");
+    return h.linkRepo({ repo: body.repo, name: body.name, scope: body.scope === "chat" || body.scope === "project" ? body.scope : undefined, ...target(body) });
+  });
+  route("POST", "/api/repos/unlink", (_q, _s, _p, body) => h.unlinkRepo(target(body), String(body?.path ?? "")));
+  route("POST", "/api/repos/pull", (_q, _s, _p, body) => h.pullRepo(String(body?.path ?? "")));
+  route("POST", "/api/repos/push", (_q, _s, _p, body) => h.pushRepo(String(body?.path ?? "")));
+  route("PUT", "/api/chats/:id/active-repo", (_q, _s, p, body) => h.setActiveRepo(p.id, body?.path ? String(body.path) : null));
+
   // ----- Interface changes Syph made -----
   const uiState = () => ({ safeMode: !!home.config().ui?.safeMode, items: listUi(home), icons: UI_ICONS, slots: UI_SLOTS });
   const uiChanged = <T>(v: T) => (h.uiChanged(), v);
@@ -253,7 +272,7 @@ export function createApp(h: Harness, opts: { uiDir?: string } = {}) {
   });
   route("DELETE", "/api/ui/:id", (_q, _s, p) => (removeUi(home, p.id), uiChanged(uiState())));
   route("POST", "/api/ui/:ext/:el/source", (_q, _s, p, body) => h.uiSource(p.ext, p.el, Number(body?.step ?? 0), body?.vars ?? {}, body?.projectId));
-  route("POST", "/api/ui/:ext/:el/clone", (_q, _s, p, body) => h.uiClone(p.ext, p.el, Number(body?.step ?? 0), body?.vars ?? {}, body?.projectId));
+  route("POST", "/api/ui/:ext/:el/clone", (_q, _s, p, body) => h.uiClone(p.ext, p.el, Number(body?.step ?? 0), body?.vars ?? {}, body?.projectId, body?.chatId));
 
   // ----- Live updates -----
   route("GET", "/api/events", (req, res) => {

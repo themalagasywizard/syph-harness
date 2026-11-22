@@ -34,9 +34,23 @@ Open **Connectors** in the sidebar.
 
 - **Google Workspace** lets the agent work in Gmail, Drive, Docs, Sheets, Slides, Calendar, Contacts and Tasks. Google requires your own free OAuth client (about five minutes, once). The card walks you through it: create a Google Cloud project, turn on the APIs, create a **Desktop app** client, paste the Client ID and secret, then press **Sign in with Google**. Sign-in happens in your browser and comes back to Syph on its own.
 - Reading (search mail, read docs, list events) runs freely. Sending mail, creating files and events, or changing anything asks first, unless YOLO is on. `google_api` reaches any other Google API with the same sign-in.
-- **Any other app:** ask in chat, e.g. "connect my Notion" or "add a connector for the GitHub API". Syph writes the connector (you approve it), then its card appears here for you to add the key or sign in.
+- **GitHub** is built in. Paste a personal access token (the card links to a GitHub page with the right scopes ticked) and Syph can list your repositories, clone them, pull, commit, push to main, open pull requests and call any GitHub API. A GitHub connector Syph wrote for you earlier is replaced by this one, and its token carries over.
+- **Any other app:** ask in chat, e.g. "connect my Notion" or "add a connector for the Linear API". Syph writes the connector (you approve it), then its card appears here for you to add the key or sign in.
 - Each card shows its status, its tools and whether they ask first. You can turn a connector off, disconnect it, or remove it (built-in ones are reset).
 - Keys and sign-in tokens are stored in `~/.syph/secrets/connectors.json`, out of reach of Syph's file tools, and are only ever shown masked. The local server only accepts requests from Syph's own pages, so other websites can't use your connectors.
+
+### Working on GitHub repos
+
+Link a repository and Syph works on it on its own: it pulls, edits, commits with clear messages and pushes to main (or a branch and a pull request, if you ask).
+
+- **Link a repo** from the **Repo** button in the chat bar, or **Link repo** on a project page. Pick from your GitHub repositories, or paste `owner/name` or a URL. Link it to the **whole project** (every chat in it works on it) or **this chat only**. Syph clones it into the project's folder (or `%USERPROFILE%\.syph\workspace`).
+- **See what you're working on:** the chip at the top of a chat shows the active repo, its branch, uncommitted changes (●) and commits to push (↑) or pull (↓). Its menu has **Pull latest**, **Push**, **Show folder** and **Open on GitHub**. With several repos linked, pick the active one from the **Repo** button.
+- **Syph handles git itself** with the `git` tool, signed in with your token for github.com only (the token is passed to git in its environment, never saved in the repo). Commits are made as your GitHub account (`id+login@users.noreply.github.com`) unless git already has a name and email. Force-pushes, `reset --hard`, `clean`, deleting branches or tags, and throwing away uncommitted changes ask first unless YOLO is on. `github_api` reaches issues, reviews, Actions and anything else on GitHub; only `DELETE` asks first.
+- Git must be installed ([git-scm.com](https://git-scm.com/download/win), default options).
+
+### Plans and tool calls in a chat
+
+For tasks with several steps, Syph shows its plan as a checklist at the top of its answer and ticks steps off as it works, like Claude Code does. Its tool calls fold into one line, such as **Used 12 tools · 48.3s**. Click it to see each call and its result.
 
 ### Files Syph makes
 
@@ -156,4 +170,5 @@ npm run syph -- home
 - `shell` (PowerShell on Windows), `create_task` and MCP tools ask before running in chat unless YOLO mode is on. In unattended Tasks they are declined unless YOLO for scheduled Tasks is on.
 - Syph can never edit its evals, judge or reflector prompts, config, keys, traces or history.
 - The file preview and Open / Show in folder only reach the workspace, project folders and files Syph made. They never reach its keys or config. Previews of web pages run sandboxed.
+- GitHub: your token reaches git only as a header for `https://github.com`, through git's environment. The `git` tool only runs everyday subcommands, refuses options that run other programs (`rebase --exec`, `--upload-pack`, ...) and only writes a few safe config keys. Git hooks run only in YOLO mode, since they are programs too.
 - Interface changes can't contain code. A list in a button can only read: either a GET through a connector, or a tool that needs no approval.
