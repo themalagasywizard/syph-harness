@@ -5,7 +5,7 @@ import { googleWorkspace } from "./connectors/google.ts";
 import { GITHUB_API, github, listGithubRepos } from "./connectors/github.ts";
 import { activeRepo, allLinkedRepos, checkpointCommit, cloneAndLink, explainGitError, git, linkedRepos, repoPrompt, repoStatus, repoTools, setActiveRepo, unlinkRepo, type RepoHost } from "./repos.ts";
 import { planPrompt, updatePlanTool } from "./plan.ts";
-import { failedChecksMessage, longTaskPrompt, longTaskTools, planToProgress, progressKey, progressPrompt, readProgress, runChecks, updateProgress, writeProgress } from "./longtask.ts";
+import { failedChecksMessage, longTaskPrompt, longTaskTools, planToProgress, progressKey, progressPrompt, readProgress, runChecks, updateProgress } from "./longtask.ts";
 import { connectorAgentTools, connectorPrompt } from "./connectors/agent-tools.ts";
 import { buildSystemPrompt, compactHistory, elideToolResult } from "./context.ts";
 import { caseFromRun, evalHistory, listCases, runSuite } from "./evals/index.ts";
@@ -26,12 +26,13 @@ import { builtinTools } from "./tools/builtin.ts";
 import { ToolRegistry } from "./tools/registry.ts";
 import type { Tool, ToolContext } from "./tools/types.ts";
 import { Trace, addRating, listRuns } from "./trace.ts";
-import type { AgentEvent, ChatMessage, ChatRecord, CheckResult, Contract, PlanStep, Recap, Task, Turn } from "./types.ts";
+import type { AgentEvent, Attachment, ChatMessage, ChatRecord, Contract, PlanStep, Recap, Task, Turn } from "./types.ts";
 import { id, now } from "./util.ts";
 import { FileIndex, changedFiles, mentionedFiles, snapshot } from "./files/index.ts";
 import { actionAt, checkUi, fillTemplate, flattenItem, getUi, itemsFrom, uiAgentTools, uiPrompt, type UiButton, type UiEnv } from "./ui-ext.ts";
 import type { FileRef, RepoLink } from "./types.ts";
-import { resolve } from "node:path";
+import { resolve, relative, sep, isAbsolute } from "node:path";
+import { attachmentsForModel, saveAttachment } from "./attachments.ts";
 
 /** The command a shell-like call would run, for allow-lists. */
 const commandOf = (tool: string, args: unknown) => (tool === "shell" && args && typeof (args as { command?: unknown }).command === "string" ? ((args as { command: string }).command).trim() : null);
@@ -80,6 +81,11 @@ interface LiveRun {
 
 /** Tools that never write files, so there is nothing to look for after them. */
 const READ_ONLY_TOOLS = new Set(["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_connectors", "list_ui", "propose_ui_change", "propose_skill", "propose_memory", "create_task", "create_connector", "update_plan", "list_repos", "github_repos", "github_api", "github_pr_create"]);
+/** What the agent may use while it drafts a contract in long-task mode: look around, write nothing. */
+const DRAFT_TOOLS = ["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_repos", "github_repos", "list_connectors", "set_contract", "ask_user", "update_plan", "note_progress"];
+const DRAFT_PROMPT = `# Long-task mode: draft the contract first
+The user switched on long-task mode. Before any work: look around as much as you need (read-only), then call set_contract with the goal, the scope, the paths never to touch, and done_when checks with commands that prove the work is done. Then stop and tell the user, in two or three lines, that the contract is ready for them to review, edit and approve. Don't change any file yet: that starts once they approve.`;
+
 /** Tools that change many files the agent didn't write (a clone, a pull, a checkout): not shown as files it made. */
 const QUIET_FILE_TOOLS = new Set(["git", "github_clone"]);
 
@@ -89,7 +95,7 @@ export class Harness {
   private mcp: McpConnection[] = [];
   extensionReports: ExtensionReport[] = [];
   scheduler?: Scheduler;
-  private approvals = new Map<string, { resolve: (ok: boolean) => void; emit: (e: AgentEvent) => void; chatId?: string }>();
+  private approvals = new Map<string, { resolve: (ok: boolean) => void; emit: (e: AgentEvent) => void; chatId?: string; tool?: string; command?: string | null }>();
   /** Chats that are running right now, each independent of any open window. */
   private live = new Map<string, LiveRun>();
   readonly jobs = new Map<string, Job>();
@@ -271,6 +277,16 @@ export class Harness {
     return true;
   }
 
+  /** "Always allow": this exact shell command (or this tool) runs without asking from now on. */
+  allowAlways(approvalId: string) {
+    const r = this.approvals.get(approvalId);
+    if (!r) return false;
+    const a = this.home.config().approval;
+    if (r.command) this.home.saveConfig({ approval: { ...a, allowCommands: [...new Set([...(a.allowCommands ?? []), r.command])] } } as any);
+    else if (r.tool) this.home.saveConfig({ toolPermissions: { ...(this.home.config().toolPermissions ?? {}), [r.tool]: "auto" } });
+    return this.resolveApproval(approvalId, true);
+  }
+
   /** YOLO switched on: let every tool that is waiting for an answer run. */
   approveAllPending() {
     for (const id of [...this.approvals.keys()]) this.resolveApproval(id, true, true);
@@ -286,7 +302,7 @@ export class Harness {
         const command = commandOf(tool, args);
         if (command && (this.home.config().approval?.allowCommands ?? []).includes(command)) return resolve(true);
         const aid = id("ap_");
-        this.approvals.set(aid, { resolve, emit, chatId });
+        this.approvals.set(aid, { resolve, emit, chatId, tool, command });
         emit({ type: "approval_request", id: aid, tool, args, reason });
         signal?.addEventListener("abort", () => this.resolveApproval(aid, false));
         setTimeout(() => this.resolveApproval(aid, false), 30 * 60_000).unref?.();
@@ -308,8 +324,8 @@ export class Harness {
   }
 
   /** Start a chat turn in the background. Returns at once; follow it with watchChat. */
-  startChat(chatId: string, text: string, opts: { model?: string } = {}) {
-    if (!text.trim()) throw Object.assign(new Error("Message is empty."), { status: 400 });
+  startChat(chatId: string, text: string, opts: { model?: string; attachments?: Attachment[]; mode?: "long" } = {}) {
+    if (!text.trim() && !opts.attachments?.length) throw Object.assign(new Error("Message is empty."), { status: 400 });
     if (this.live.has(chatId)) throw Object.assign(new Error("This chat is still working. Stop it or wait for it to finish."), { status: 409 });
     if (!store.getChat(this.home, chatId)) throw Object.assign(new Error(`No chat ${chatId}`), { status: 404 });
     const done = this.runLive(chatId, text, opts);
@@ -345,7 +361,42 @@ export class Harness {
     return true;
   }
 
-  private async runLive(chatId: string, text: string, opts: { model?: string; approve?: ToolContext["approve"] }) {
+  /** The chat's contract and progress, for the UI. */
+  progressOf(chatId: string) {
+    const chat = store.getChat(this.home, chatId);
+    if (!chat) throw Object.assign(new Error(`No chat ${chatId}`), { status: 404 });
+    return readProgress(this.home, progressKey(chat));
+  }
+
+  /** The user edits or approves the contract (long-task mode: approving starts the work). */
+  updateContract(chatId: string, patch: { goal?: string; scope?: string[]; never?: string[]; doneWhen?: { text: string; command?: string }[]; approve?: boolean; clear?: boolean }) {
+    const chat = store.getChat(this.home, chatId);
+    if (!chat) throw Object.assign(new Error(`No chat ${chatId}`), { status: 404 });
+    const strs = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean).slice(0, 30) : undefined);
+    const p = updateProgress(this.home, progressKey(chat), (p) => {
+      if (patch.clear) return void (p.contract = undefined);
+      const c = p.contract ?? { goal: "", scope: [], never: [], doneWhen: [], updatedAt: now() };
+      if (typeof patch.goal === "string") c.goal = patch.goal.slice(0, 500);
+      c.scope = strs(patch.scope) ?? c.scope;
+      c.never = strs(patch.never) ?? c.never;
+      if (Array.isArray(patch.doneWhen)) c.doneWhen = patch.doneWhen.filter((d) => d && String(d.text ?? "").trim()).slice(0, 15).map((d) => ({ text: String(d.text).trim().slice(0, 300), ...(d.command && String(d.command).trim() ? { command: String(d.command).trim().slice(0, 500) } : {}) }));
+      if (patch.approve) delete c.draft;
+      c.updatedAt = now();
+      p.contract = c;
+    });
+    this.broadcast({ type: "chats" });
+    return p;
+  }
+
+  /** Save a file the user attached; it is sent with their next message. */
+  saveUpload(chatId: string, name: string, base64: string): Attachment {
+    const chat = store.getChat(this.home, chatId);
+    if (!chat) throw Object.assign(new Error(`No chat ${chatId}`), { status: 404 });
+    if (!name || typeof base64 !== "string") throw Object.assign(new Error("Send a file name and its data."), { status: 400 });
+    return saveAttachment(store.workspaceFor(this.home, chat.projectId), name, Buffer.from(base64, "base64"));
+  }
+
+  private async runLive(chatId: string, text: string, opts: { model?: string; approve?: ToolContext["approve"]; attachments?: Attachment[]; mode?: "long" }) {
     const run: LiveRun = { ac: new AbortController(), inbox: [], events: [], listeners: new Set() };
     this.live.set(chatId, run);
     const emit = (e: AgentEvent) => {
@@ -359,7 +410,7 @@ export class Harness {
     };
     this.broadcast({ type: "chats" });
     try {
-      return await this.chat(chatId, text, { model: opts.model, signal: run.ac.signal, emit, approve: opts.approve });
+      return await this.chat(chatId, text, { model: opts.model, signal: run.ac.signal, emit, approve: opts.approve, attachments: opts.attachments, mode: opts.mode });
     } finally {
       this.live.delete(chatId);
       for (const l of run.listeners) l({ type: "closed" } as any);
@@ -455,15 +506,21 @@ export class Harness {
 
   // ---------- Chat ----------
 
-  async chat(chatId: string, text: string, opts: { model?: string; signal?: AbortSignal; emit?: (e: AgentEvent) => void; approve?: ToolContext["approve"] } = {}): Promise<Turn> {
+  async chat(chatId: string, text: string, opts: { model?: string; signal?: AbortSignal; emit?: (e: AgentEvent) => void; approve?: ToolContext["approve"]; attachments?: Attachment[]; mode?: "long" } = {}): Promise<Turn> {
     const chat = store.getChat(this.home, chatId);
     if (!chat) throw new Error(`No chat ${chatId}`);
+    // Attachments must be files saved in this chat's workspace (by saveUpload), never arbitrary paths.
+    const ws = store.workspaceFor(this.home, chat.projectId);
+    const attachments = (opts.attachments ?? []).filter((a) => {
+      const r = relative(ws, resolve(String(a?.path ?? "")));
+      return !!r && !r.startsWith("..") && !isAbsolute(r) && r.split(sep)[0] === "uploads";
+    });
     const emit = opts.emit ?? (() => {});
     const model = opts.model ?? chat.model ?? this.home.config().defaults.chatModel;
     chat.model = model;
-    const userTurn: Turn = { id: id("u_"), role: "user", content: text, createdAt: now() };
+    const userTurn: Turn = { id: id("u_"), role: "user", content: text, createdAt: now(), ...(attachments.length ? { attachments } : {}) };
     chat.turns.push(userTurn);
-    if (chat.turns.length === 1) chat.title = text.replace(/\s+/g, " ").slice(0, 60) + (text.length > 60 ? "…" : "");
+    if (chat.turns.length === 1) chat.title = (text.trim() ? text.replace(/\s+/g, " ").slice(0, 60) + (text.length > 60 ? "…" : "") : attachments.map((a) => a.name).join(", ").slice(0, 60));
     store.saveChat(this.home, chat);
 
     const profile = getProfile(this.home, model);
@@ -512,14 +569,20 @@ export class Harness {
 
     const usage = emptyUsage();
     try {
-      let history: ChatMessage[] = [...chat.history, { role: "user", content: text }];
+      const att = attachmentsForModel(attachments, profile);
+      const userMessage: ChatMessage = { role: "user", content: [text, att.text].filter(Boolean).join("\n\n"), ...(att.images.length ? { images: att.images } : {}) };
+      let history: ChatMessage[] = [...chat.history, userMessage];
       history = await compactHistory(history, profile.contextWindow, async (t) => {
         const r = await complete(this.home, { model, messages: [{ role: "system", content: "Summarise this conversation so it can continue: decisions, facts, open tasks, file paths. Be concise." }, { role: "user", content: t }] });
         addUsage(usage, r);
         return r.content;
       });
       const key = progressKey(chat);
-      const system = buildSystemPrompt(this.home, { model, projectId: chat.projectId, query: text, connectors: await this.appPrompt(chat.projectId, chat), extra: progressPrompt(readProgress(this.home, key)) });
+      if (opts.mode === "long" && !readProgress(this.home, key).contract?.draft) {
+        updateProgress(this.home, key, (p) => void (p.contract = { goal: text.slice(0, 300), scope: [], never: [], doneWhen: [], draft: true, updatedAt: now() }));
+      }
+      const drafting = !!readProgress(this.home, key).contract?.draft;
+      const system = buildSystemPrompt(this.home, { model, projectId: chat.projectId, query: text, connectors: await this.appPrompt(chat.projectId, chat), extra: [progressPrompt(readProgress(this.home, key)), drafting ? DRAFT_PROMPT : ""].filter(Boolean).join("\n\n") });
       const repo = activeRepo(this.home, chat, chat.projectId);
       let checkpoints = Promise.resolve();
       const onPlan = (steps: PlanStep[]) => {
@@ -534,7 +597,7 @@ export class Harness {
       const approve = opts.approve ?? this.interactiveApprove(relay, opts.signal, chatId);
       const ctx = this.toolContext(trace.runId, { projectId: chat.projectId, chatId, approve, signal: opts.signal, model, onPlan, progressKey: key, onContract: (c) => relay({ type: "contract", contract: c }) });
       ctx.loadedTools = new Set(chat.loadedTools ?? []);
-      const tools = this.tools();
+      const tools = drafting ? this.tools().pick(DRAFT_TOOLS) : this.tools();
       const strategy = getStrategy(profile.strategy);
       const inbox = () => {
         const queued = this.live.get(chatId)?.inbox.splice(0) ?? [];

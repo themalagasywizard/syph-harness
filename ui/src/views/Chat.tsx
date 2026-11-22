@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, Clock, Code2, Copy, Files, FlaskConical, FolderClosed, Lightbulb, LayoutTemplate, ListChecks, Loader2, Moon, ShieldQuestion, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Wrench, Zap } from "lucide-react";
+import { ArrowUp, AtSign, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, Clock, Code2, Copy, CornerDownRight, Files, Flag, FlaskConical, FolderClosed, Image as ImageIcon, Lightbulb, LayoutTemplate, ListChecks, Loader2, Moon, Paperclip, Pencil, RotateCcw, ShieldQuestion, Slash, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Wrench, X, Zap } from "lucide-react";
 import { Markdown } from "../components/Markdown";
 import { Mark } from "../components/Logo";
 import { CellLoader } from "../components/CellLoader";
 import { ModelPicker } from "../components/ModelPicker";
 import { useApp } from "../App";
-import { api, followChat, sendMessage, type AgentEvent, type Chat, type FileRef, type PlanStep, type Proposal, type ToolCallView, type Turn } from "../api";
+import { api, followChat, queueMessage, sendMessage, uploadAttachment, type AgentEvent, type Attachment, type Chat, type CheckResult, type FileRef, type PlanStep, type Progress, type Proposal, type RunStatus, type ToolCallView, type Turn } from "../api";
+import { ContractCard, EditDiff, QuestionCard, RecapLine, StatusLine, StopCard } from "../components/RunCards";
 import { ActiveRepoChip, RepoComposerMenu } from "../components/Repos";
 import { FileCard, FileIcon } from "../components/FilePreview";
 import { ExtIcon, Slot, type UiExtension } from "../ext";
@@ -22,8 +23,22 @@ function greeting() {
   return h < 5 ? "Working late" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
 }
 
+/** Long outputs show their first lines until asked for the rest. */
+function ToolOutput({ text }: { text: string }) {
+  const [all, setAll] = useState(false);
+  const lines = text.split("\n");
+  const long = lines.length > 40;
+  return (
+    <>
+      <pre className="tool-body">{long && !all ? lines.slice(0, 40).join("\n") : text}</pre>
+      {long && <button className="show-all" onClick={() => setAll((a) => !a)}>{all ? "Show less" : `Show all ${lines.length} lines`}</button>}
+    </>
+  );
+}
+
 function ToolBlock({ call }: { call: ToolCallView }) {
   const [open, setOpen] = useState(false);
+  const isEdit = (call.name === "edit_file" || call.name === "write_file") && !!call.args && typeof call.args === "object";
   const args = call.args && typeof call.args === "object" ? Object.entries(call.args as Record<string, unknown>).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(" ") : String(call.args ?? "");
   const status = call.ok === undefined ? "running" : call.ok ? "ok" : "error";
   return (
@@ -35,7 +50,8 @@ function ToolBlock({ call }: { call: ToolCallView }) {
         <span className="a">{args}</span>
         {call.ms != null && <span className="ms">{call.ms}ms</span>}
       </button>
-      {open && <pre className="tool-body">{call.result ?? "…"}</pre>}
+      {open && isEdit && <EditDiff args={call.args as Record<string, unknown>} />}
+      {open && (call.result === undefined ? <pre className="tool-body">…</pre> : <ToolOutput text={call.result} />)}
     </div>
   );
 }
@@ -185,6 +201,21 @@ function UiProposalCard({ id }: { id: string }) {
   );
 }
 
+function AttachmentChips({ items, uploading = 0, onRemove }: { items: Attachment[]; uploading?: number; onRemove?: (a: Attachment) => void }) {
+  const { showFile } = useApp();
+  return (
+    <div className="att-chips">
+      {items.map((a) => (
+        <span key={a.path} className="att-chip" title={a.path}>
+          <button className="att-open" onClick={() => showFile(a.path)}>{a.kind === "image" ? <ImageIcon size={14} /> : <FileIcon name={a.name} size={14} />} <span className="ellipsis">{a.name}</span></button>
+          {onRemove && <button className="att-x" aria-label={`Remove ${a.name}`} onClick={() => onRemove(a)}><X size={12} /></button>}
+        </span>
+      ))}
+      {uploading > 0 && <span className="att-chip"><Loader2 size={14} className="spin" /> Uploading {uploading}…</span>}
+    </div>
+  );
+}
+
 function FileList({ files }: { files: FileRef[] }) {
   const { showFile } = useApp();
   return <div className="files">{files.map((f) => <FileCard key={f.path} f={f} onPreview={showFile} />)}</div>;
@@ -196,7 +227,11 @@ interface Approval {
   args: unknown;
 }
 
-function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, startedAt }: { turn: Turn; chatId?: string; streaming?: boolean; approval?: Approval | null; onApprove?: (allow: boolean) => void; note?: string; startedAt?: number }) {
+type Answer = boolean | "always";
+
+function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, startedAt, status, last, busy, onSend, onRetry }: { turn: Turn; chatId?: string; streaming?: boolean; approval?: Approval | null; onApprove?: (allow: Answer) => void; note?: string; startedAt?: number; status?: RunStatus; last?: boolean; busy?: boolean; onSend?: (text: string) => void; onRetry?: () => void }) {
+  const elapsed = useElapsed(streaming ? startedAt : undefined);
+  const running = streaming ? turn.toolCalls?.find((c) => c.ok === undefined) : undefined;
   const [rating, setRating] = useState(turn.rating);
   const [copied, setCopied] = useState(false);
   const [feedback, setFeedback] = useState<null | "open" | "saved">(null);
@@ -235,17 +270,33 @@ function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, sta
               <pre className="approval-args">{JSON.stringify(approval.args, null, 2)}</pre>
             </div>
             <button className="btn ghost sm" onClick={() => onApprove?.(false)}>Deny</button>
+            <button className="btn tonal sm" onClick={() => onApprove?.("always")} title={approval.tool === "shell" ? "Run this exact command without asking from now on" : `Let ${approval.tool} run without asking from now on`}>Always allow</button>
             <button className="btn primary sm" onClick={() => onApprove?.(true)}>Allow</button>
           </div>
         )}
-        {turn.content ? <Markdown text={turn.content} /> : streaming && !approval && <div className="thinking"><span /><span /><span /></div>}
+        {!!turn.steering?.length && (
+          <div className="steering">
+            {turn.steering.map((t, i) => <div key={i} className="steer"><CornerDownRight size={13} /> <span>You, while it worked: {t}</span></div>)}
+          </div>
+        )}
+        {turn.question && !streaming ? (
+          <QuestionCard question={turn.question} onAnswer={(a) => onSend?.(a)} disabled={!last || busy} />
+        ) : turn.content ? (
+          <Markdown text={turn.content} />
+        ) : (
+          streaming && !approval && <div className="thinking"><span /><span /><span /></div>
+        )}
         {streaming && turn.content && <span className="caret" />}
+        {streaming && <StatusLine status={status} elapsed={elapsed} current={running ? callLabel(running) : undefined} />}
+        {!streaming && <RecapLine recap={turn.recap} />}
+        {!streaming && last && <StopCard reason={turn.stopReason} onContinue={(m) => onSend?.(m)} disabled={busy} />}
         {!streaming && (
           <div className="msg-actions">
             <button className="icon-btn sm" aria-label="Good response" onClick={() => rate("up")} style={rating === "up" ? { color: "var(--text)" } : undefined}><ThumbsUp size={16} fill={rating === "up" ? "currentColor" : "none"} /></button>
             <button className="icon-btn sm" aria-label="Bad response" onClick={() => rate("down")} style={rating === "down" ? { color: "var(--text)" } : undefined}><ThumbsDown size={16} fill={rating === "down" ? "currentColor" : "none"} /></button>
             <button className="icon-btn sm" aria-label="Copy" onClick={() => { navigator.clipboard.writeText(turn.content); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? <Check size={16} /> : <Copy size={16} />}</button>
             {turn.runId && rating && feedback !== "open" && feedback !== "saved" && <button className="icon-btn sm" title="Turn into eval case" onClick={() => setFeedback("open")}><FlaskConical size={16} /></button>}
+            {last && onRetry && !busy && <button className="icon-btn sm" aria-label="Retry" title="Send the last message again" onClick={onRetry}><RotateCcw size={16} /></button>}
             {turn.model && <span className="model-tag">{turn.model.replace(/^openrouter:/, "")}</span>}
           </div>
         )}
@@ -277,6 +328,17 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const [approval, setApproval] = useState<Approval | null>(null);
   const [pendingUser, setPendingUser] = useState<Turn | null>(null);
   const [error, setError] = useState<string>();
+  const [status, setStatus] = useState<RunStatus>();
+  const [progress, setProgress] = useState<Progress>();
+  const [liveChecks, setLiveChecks] = useState<CheckResult[]>();
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const [longMode, setLongMode] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [mention, setMention] = useState<{ kind: "/" | "@"; query: string; start: number } | null>(null);
+  const [wsFiles, setWsFiles] = useState<string[]>([]);
+  const [queued, setQueued] = useState<string[]>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
   // Watching a run, not owning it: leaving this view only stops watching. The run carries on on the server.
   const watchRef = useRef<AbortController | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -302,6 +364,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
     if (!chatId) return;
     api.get<Chat>(`/chats/${chatId}`).then((c) => {
       setChat(c);
+      setProgress(c.progress);
       setProjectId(c.projectId);
       setModel(c.model);
       if (c.running) follow(chatId);
@@ -333,6 +396,8 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
     setLiveStart(Date.now());
     setNote(undefined);
     setApproval(null);
+    setStatus(undefined);
+    setLiveChecks(undefined);
     const onEvent = (e: AgentEvent) => {
       setLive((t) => {
         if (!t) return t;
@@ -349,10 +414,16 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             return { ...t, files: [...all.values()] };
           }
           case "message": return t.content && (e as any).message?.tool_calls?.length ? { ...t, content: "" } : t;
+          case "steer": return { ...t, steering: [...(t.steering ?? []), e.text] };
+          case "checks": return { ...t, checks: e.checks };
           default: return t;
         }
       });
       if (e.type === "run_start" && e.at) setLiveStart(e.at);
+      if (e.type === "status") setStatus({ step: e.step, contextTokens: e.contextTokens, contextWindow: e.contextWindow, usage: e.usage, cachedTokens: e.cachedTokens });
+      if (e.type === "steer") setQueued((q) => q.slice(1));
+      if (e.type === "checks") setLiveChecks(e.checks);
+      if (e.type === "contract") setProgress((p) => ({ done: [], decisions: [], deadEnds: [], blocked: [], ...p, contract: e.contract }));
       if (e.type === "note" && e.text) setNote(e.text);
       if (e.type === "approval_request") setApproval({ id: e.id, tool: e.tool, args: e.args });
       if (e.type === "approval_done" || e.type === "tool_result") setApproval((a) => (a && (e.type !== "approval_done" || a.id === e.id) ? null : a));
@@ -364,8 +435,13 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
     }
     if (ac.signal.aborted) return;
     const fresh = await api.get<Chat>(`/chats/${id}`).catch(() => null);
-    if (fresh) setChat(fresh);
+    if (fresh) {
+      setChat(fresh);
+      setProgress(fresh.progress);
+    }
     setLive(null);
+    setStatus(undefined);
+    setQueued([]);
     setPendingUser(null);
     setApproval(null);
     setNote(undefined);
@@ -375,9 +451,27 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   };
 
   const send = async (text = draft) => {
-    if (!text.trim() || live) return;
+    // While it works, a message steers the run: the agent reads it at its next step.
+    if (live && cid) {
+      if (!text.trim()) return;
+      setDraft("");
+      setQueued((q) => [...q, text.trim()]);
+      try {
+        await queueMessage(cid, text.trim());
+      } catch (e) {
+        setQueued((q) => q.filter((x) => x !== text.trim()));
+        setDraft(text);
+        setError((e as Error).message);
+      }
+      return;
+    }
+    const files = attachments;
+    if ((!text.trim() && !files.length) || live || uploading) return;
     setError(undefined);
     setDraft("");
+    setAttachments([]);
+    const mode = longMode ? ("long" as const) : undefined;
+    setLongMode(false);
     let id = cid;
     try {
       const fresh = !id;
@@ -388,8 +482,8 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
       } else if (chat && (chat.projectId !== projectId || chat.model !== model)) {
         await api.patch(`/chats/${id}`, { projectId, model });
       }
-      setPendingUser({ id: "pending", role: "user", content: text, createdAt: new Date().toISOString() });
-      await sendMessage(id, text, model);
+      setPendingUser({ id: "pending", role: "user", content: text, attachments: files, createdAt: new Date().toISOString() });
+      await sendMessage(id, text, model, { attachments: files.length ? files : undefined, mode });
       refresh();
       // A new chat gets its own address, so "New chat" starts another one while this keeps running.
       if (fresh) return go({ kind: "chat", chatId: id });
@@ -400,8 +494,60 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
     } catch (e) {
       setPendingUser(null);
       setDraft(text);
+      setAttachments(files);
       setError((e as Error).message);
     }
+  };
+
+  /** Files dropped, pasted or picked: saved to the chat's uploads/ folder, sent with the next message. */
+  const addFiles = async (list: FileList | File[]) => {
+    const picked = [...list].filter((f) => f.size > 0);
+    if (!picked.length) return;
+    setError(undefined);
+    let id: string;
+    try {
+      id = await ensureChat();
+    } catch (e) {
+      return setError((e as Error).message);
+    }
+    setUploading((n) => n + picked.length);
+    for (const f of picked) {
+      try {
+        const a = await uploadAttachment(id, f);
+        setAttachments((xs) => [...xs, a]);
+      } catch (e) {
+        setError(`${f.name}: ${(e as Error).message}`);
+      }
+      setUploading((n) => n - 1);
+    }
+  };
+
+  // "/" offers skills, "@" offers workspace files, at the start of a word.
+  const onDraft = (value: string, caret: number) => {
+    setDraft(value);
+    const m = /(^|\s)([/@])([\w./-]*)$/.exec(value.slice(0, caret));
+    if (!m || (m[2] === "/" && m.index + m[1].length !== 0)) return setMention(null);
+    const kind = m[2] as "/" | "@";
+    setMention({ kind, query: m[3].toLowerCase(), start: m.index + m[1].length });
+    if (kind === "@" && !wsFiles.length) api.get<string[]>(`/workspace-files${projectId ? `?projectId=${projectId}` : ""}`).then(setWsFiles).catch(() => {});
+  };
+  const mentionItems = !mention
+    ? []
+    : mention.kind === "/"
+      ? (state?.skills ?? []).filter((sk) => sk.name.toLowerCase().includes(mention.query)).slice(0, 8).map((sk) => ({ label: sk.name, hint: sk.description, insert: `Use the ${sk.name} skill: ` }))
+      : wsFiles.filter((f) => f.toLowerCase().includes(mention.query)).slice(0, 8).map((f) => ({ label: f, hint: "", insert: `${f} ` }));
+  const pickMention = (insert: string) => {
+    if (!mention) return;
+    const t = textarea.current;
+    const caret = t?.selectionStart ?? draft.length;
+    const next = draft.slice(0, mention.start) + insert + draft.slice(caret);
+    setDraft(next);
+    setMention(null);
+    requestAnimationFrame(() => {
+      t?.focus();
+      const pos = mention.start + insert.length;
+      t?.setSelectionRange(pos, pos);
+    });
   };
 
   /** Linking a repo to "this chat" before the first message: make the chat now, without leaving the page. */
@@ -421,13 +567,21 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
     refresh();
   };
 
-  const answer = async (allow: boolean) => {
+  const answer = async (allow: Answer) => {
     if (!approval) return;
-    await api.post(`/approvals/${approval.id}`, { allow });
+    await api.post(`/approvals/${approval.id}`, allow === "always" ? { allow: true, always: true } : { allow });
     setApproval(null);
+    if (allow === "always") refresh();
   };
 
   const turns = [...(chat?.turns ?? []), ...(pendingUser ? [pendingUser] : [])];
+  const lastAssistant = turns.findLastIndex((t) => t.role === "assistant");
+  const lastUserIdx = turns.findLastIndex((t) => t.role === "user");
+  const lastChecks = liveChecks ?? turns.findLast((t) => t.checks?.length)?.checks;
+  const retry = () => {
+    const u = turns[lastUserIdx];
+    if (u) send(u.content || "Please try again.");
+  };
   const chatFiles = [...new Map([...turns, ...(live ? [live] : [])].flatMap((t) => t.files ?? []).map((f) => [f.path, f])).values()].reverse();
   const slotCtx = { projectId, chatId: cid, send: (t: string) => (live ? setDraft(t) : send(t)), setDraft: (t: string) => { setDraft(t); textarea.current?.focus(); } };
   const empty = !turns.length && !live;
@@ -477,8 +631,26 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             </div>
           ) : (
             <>
-              {turns.map((t) => (t.role === "user" ? <div key={t.id} className="msg user"><div className="bubble">{t.content}</div></div> : <AssistantTurn key={t.id} turn={t} chatId={chat?.id} />))}
-              {live && <AssistantTurn turn={live} streaming approval={approval} onApprove={answer} note={note} startedAt={liveStart} />}
+              {cid && progress?.contract && <ContractCard chatId={cid} progress={progress} checks={lastChecks} live={!!live} onChanged={setProgress} onStart={() => send("The contract is approved. Start the work, and keep to it.")} />}
+              {turns.map((t, i) =>
+                t.role === "user" ? (
+                  <div key={t.id} className="msg user">
+                    <div className="user-col">
+                      {!!t.attachments?.length && <AttachmentChips items={t.attachments} />}
+                      {t.content && <div className="bubble">{t.content}</div>}
+                      {i === lastUserIdx && !live && t.id !== "pending" && t.content && (
+                        <button className="edit-msg" title="Put this message back in the box to edit and send again" onClick={() => { setDraft(t.content); textarea.current?.focus(); }}><Pencil size={12} /> Edit</button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <AssistantTurn key={t.id} turn={t} chatId={chat?.id} last={i === lastAssistant && i > lastUserIdx} busy={!!live} onSend={(m) => send(m)} onRetry={retry} />
+                ),
+              )}
+              {live && <AssistantTurn turn={live} streaming approval={approval} onApprove={answer} note={note} startedAt={liveStart} status={status} />}
+              {queued.length > 0 && (
+                <div className="queued">{queued.map((q, i) => <div key={i} className="steer"><Clock size={13} /> <span>Queued for the next step: {q}</span></div>)}</div>
+              )}
             </>
           )}
         </div>
@@ -487,14 +659,60 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
       <div className="composer-wrap">
         {error && <div className="banner bad">{error}</div>}
         {noKey && <div className="banner">Add your OpenRouter key in <a href="#/settings">Settings</a> to chat with {model?.replace("openrouter:", "")}.</div>}
-        <div className="composer">
+        <div
+          className={`composer ${dragging ? "dragging" : ""}`}
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes("Files")) {
+              e.preventDefault();
+              setDragging(true);
+            }
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            if (!e.dataTransfer.files.length) return;
+            e.preventDefault();
+            setDragging(false);
+            addFiles(e.dataTransfer.files);
+          }}
+        >
+          {mention && mentionItems.length > 0 && (
+            <div className="menu mention-menu">
+              <div className="grp">{mention.kind === "/" ? "Skills" : "Files"}</div>
+              {mentionItems.map((m) => (
+                <button key={m.label} onMouseDown={(e) => { e.preventDefault(); pickMention(m.insert); }}>
+                  {mention.kind === "/" ? <Slash size={14} /> : <AtSign size={14} />}
+                  <span className="ellipsis">{m.label}</span>
+                  {m.hint && <span className="id">{m.hint}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+          {(attachments.length > 0 || uploading > 0) && (
+            <AttachmentChips items={attachments} uploading={uploading} onRemove={(a) => setAttachments((xs) => xs.filter((x) => x.path !== a.path))} />
+          )}
           <textarea
             ref={textarea}
             rows={1}
-            placeholder={project ? `Message Syph in ${project.name}` : "Message Syph"}
+            placeholder={live ? "Add a note for Syph while it works…" : longMode ? "Describe the long task. Syph drafts a contract for you to approve first." : project ? `Message Syph in ${project.name}` : "Message Syph"}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => onDraft(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+            onPaste={(e) => {
+              const pasted = [...e.clipboardData.items].filter((it) => it.kind === "file").map((it) => it.getAsFile()).filter((f): f is File => !!f);
+              if (pasted.length) {
+                e.preventDefault();
+                addFiles(pasted);
+              }
+            }}
             onKeyDown={(e) => {
+              if (mention && mentionItems.length && (e.key === "Enter" || e.key === "Tab")) {
+                e.preventDefault();
+                return pickMention(mentionItems[0].insert);
+              }
+              if (e.key === "Escape" && mention) return setMention(null);
+              if (e.key === "ArrowUp" && !draft && lastUserIdx >= 0) {
+                e.preventDefault();
+                return setDraft(turns[lastUserIdx].content);
+              }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 send();
@@ -519,21 +737,27 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
                 </div>
               )}
             </div>
+            <button className="icon-btn sm attach" onClick={() => fileInput.current?.click()} aria-label="Attach files" title="Attach files (or drop or paste them)"><Paperclip size={16} /></button>
+            <input ref={fileInput} type="file" multiple hidden onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ""; }} />
             <RepoComposerMenu chatId={cid} projectId={projectId} ensureChat={ensureChat} />
+            <button className={`pill ${longMode ? "on" : ""}`} onClick={() => setLongMode((m) => !m)} disabled={!!live} title="Long task: Syph first drafts a contract (goal, scope, the checks that prove it's done) for you to approve, then works to it">
+              <Flag size={15} /> Long task
+            </button>
             <button className={`pill yolo ${yolo ? "on" : ""}`} onClick={toggleYolo} title={yolo ? "YOLO is on: shell (PowerShell) and other ask-first tools run without asking. Click to turn off." : "Turn on YOLO: run shell (PowerShell) and other ask-first tools without asking."}>
               <Zap size={15} fill={yolo ? "currentColor" : "none"} /> {yolo ? "YOLO on" : "Ask first"}
             </button>
             <Slot name="chat.composer" ctx={slotCtx} />
             <div className="spacer" />
             <ModelPicker value={model} onChange={setModel} />
+            {live && draft.trim() && <button className="send ready" onClick={() => send()} aria-label="Send to the running task" title="Syph reads it at its next step"><CornerDownRight size={18} /></button>}
             {live ? (
               <button className="send ready" onClick={stop} aria-label="Stop"><Square size={14} fill="currentColor" /></button>
             ) : (
-              <button className={`send ${draft.trim() ? "ready" : ""}`} onClick={() => send()} aria-label="Send"><ArrowUp size={20} /></button>
+              <button className={`send ${draft.trim() || attachments.length ? "ready" : ""}`} onClick={() => send()} disabled={uploading > 0} aria-label="Send"><ArrowUp size={20} /></button>
             )}
           </div>
         </div>
-        <div className="disclaimer">{live ? "This chat keeps running if you switch chats or pages. " : ""}Syph runs locally. Changes to its own skills, memory or prompts wait for your approval in Evolve.</div>
+        <div className="disclaimer">{live ? "This chat keeps running if you switch chats or pages. Messages you send now reach it at its next step. " : ""}Syph runs locally. Changes to its own skills, memory or prompts wait for your approval in Evolve.</div>
       </div>
     </>
   );

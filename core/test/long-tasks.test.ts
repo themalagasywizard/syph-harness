@@ -162,3 +162,81 @@ test("git checkpoints go to a side ref and leave the branch alone", async () => 
   assert.match((await git(dir, ["show", "--stat", sha!])).stdout, /new\.txt/);
   assert.equal((await git(dir, ["log", "--oneline"])).stdout.trim().split("\n").length, 1);
 });
+
+test("attachments: documents are inlined, images reach vision models only", async () => {
+  const home = tempHome();
+  const h = await new Harness(home).init({ mcp: false });
+  const { saveProfile } = await import("../src/providers/models.ts");
+  const { wireMessages } = await import("../src/providers/client.ts");
+  let last: any = null;
+  mock("main", (req) => ((last = req), reply("seen")));
+  const chat = store.createChat(home, {});
+  const note = h.saveUpload(chat.id, "notes.md", Buffer.from("# Plan\nShip on Friday").toString("base64"));
+  const png = h.saveUpload(chat.id, "shot.png", Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString("base64"));
+  assert.equal(note.kind, "text");
+  assert.equal(h.saveUpload(chat.id, "notes.md", "eA==").name, "notes (2).md");
+  saveProfile(home, { id: "mock:main", contextWindow: 30000, nativeTools: true, strategy: "direct", fewShot: 0, vision: false });
+  await h.chat(chat.id, "read these", { attachments: [note, png] });
+  const user = last.messages.findLast((m: any) => m.role === "user");
+  assert.match(user.content, /Ship on Friday/);
+  assert.match(user.content, /can't see images/);
+  assert.equal(user.images, undefined);
+  saveProfile(home, { id: "mock:main", contextWindow: 30000, nativeTools: true, strategy: "direct", fewShot: 0, vision: true });
+  await h.chat(chat.id, "and now?", { attachments: [png] });
+  const wired = wireMessages(last.messages) as any[];
+  assert.equal(wired.findLast((m) => m.role === "user").content[1].type, "image_url");
+  // Images are not kept in history, and paths outside uploads/ are ignored.
+  assert.ok(store.getChat(home, chat.id)!.history.every((m) => !m.images));
+  const turn = await h.chat(chat.id, "sneaky", { attachments: [{ name: "x", path: "/etc/passwd", kind: "text", size: 1 }] });
+  assert.equal(store.getChat(home, chat.id)!.turns.at(-2)!.attachments, undefined);
+  assert.equal(turn.content, "seen");
+});
+
+test("a message sent mid-run reaches the agent at its next step", async () => {
+  const home = tempHome();
+  const h = await new Harness(home).init({ mcp: false });
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let sawSteer = false;
+  mock("main", async (req) => {
+    if (req.messages.some((m) => m.role === "user" && m.content?.includes("use tabs"))) sawSteer = true;
+    if (!req.messages.some((m) => m.role === "tool")) {
+      await gate;
+      return reply("", [call("list_files", {})]);
+    }
+    return reply("done");
+  });
+  const chat = store.createChat(home, {});
+  h.startChat(chat.id, "format the files");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(h.queueMessage(chat.id, "use tabs, not spaces"), { ok: true, queued: 1 });
+  release();
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(sawSteer);
+  const saved = store.getChat(home, chat.id)!;
+  assert.deepEqual(saved.turns.at(-1)!.steering, ["use tabs, not spaces"]);
+  assert.ok(saved.history.some((m) => m.role === "user" && m.content?.includes("use tabs")));
+  assert.throws(() => h.queueMessage(chat.id, "late"), /isn't running/);
+});
+
+test("long-task mode drafts a contract with read-only tools until the user approves", async () => {
+  const home = tempHome();
+  const h = await new Harness(home).init({ mcp: false });
+  const offered: string[][] = [];
+  mock("main", (req) => {
+    offered.push((req.tools ?? []).map((t) => t.function.name));
+    const tools = req.messages.slice(req.messages.findLastIndex((m) => m.role === "user")).filter((m) => m.role === "tool").length;
+    return tools ? reply("Contract ready for review.") : reply("", [call("set_contract", { goal: "Migrate endpoints", done_when: [{ text: "tests pass", command: "npm test" }] })]);
+  });
+  const chat = store.createChat(home, {});
+  await h.chat(chat.id, "migrate 40 endpoints", { mode: "long" });
+  assert.ok(!offered[0].includes("write_file") && offered[0].includes("set_contract"));
+  let p = h.progressOf(chat.id);
+  assert.equal(p.contract!.draft, true);
+  assert.equal(p.contract!.goal, "Migrate endpoints");
+  p = h.updateContract(chat.id, { doneWhen: [{ text: "tests pass", command: "npm test -- --run" }], approve: true });
+  assert.equal(p.contract!.draft, undefined);
+  offered.length = 0;
+  await h.chat(chat.id, "approved, go");
+  assert.ok(offered[0].includes("write_file"));
+});

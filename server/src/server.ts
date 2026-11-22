@@ -120,9 +120,9 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
     const c = store.getChat(home, p.id);
     if (!c) throw httpError(404, "No such chat");
     const { history: _h, ...rest } = c;
-    return { ...rest, running: h.isLive(p.id) };
+    return { ...rest, running: h.isLive(p.id), progress: h.progressOf(p.id) };
   });
-  route("POST", "/api/chats", (_q, _s, _p, body) => store.createChat(home, body ?? {}));
+  route("POST", "/api/chats", (_q, _s, _p, body) => store.createChat(home, pick(body ?? {}, ["projectId", "title", "model"])));
   route("PATCH", "/api/chats/:id", (_q, _s, p, body) => {
     const c = store.getChat(home, p.id);
     if (!c) throw httpError(404, "No such chat");
@@ -133,7 +133,19 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   route("DELETE", "/api/chats/:id", (_q, _s, p) => (h.stopChat(p.id), store.deleteChat(home, p.id), { ok: true }));
   // A message starts a run on the server and returns at once. The run keeps going whatever
   // the window does; /stream follows it (replaying from the start), /stop ends it.
-  route("POST", "/api/chats/:id/messages", (_q, _s, p, body) => h.startChat(p.id, String(body?.text ?? ""), { model: body?.model }));
+  route("POST", "/api/chats/:id/messages", (_q, _s, p, body) => h.startChat(p.id, String(body?.text ?? ""), { model: body?.model, attachments: Array.isArray(body?.attachments) ? body.attachments : undefined, mode: body?.mode === "long" ? "long" : undefined }));
+  // Files dropped or pasted into the message box, saved before the message is sent.
+  route("POST", "/api/chats/:id/attachments", (_q, _s, p, body) => h.saveUpload(p.id, String(body?.name ?? ""), String(body?.data ?? "")));
+  // A message sent while the chat works: the agent reads it at its next step.
+  route("POST", "/api/chats/:id/queue", (_q, _s, p, body) => h.queueMessage(p.id, String(body?.text ?? "")));
+  route("GET", "/api/chats/:id/contract", (_q, _s, p) => h.progressOf(p.id));
+  route("PUT", "/api/chats/:id/contract", (_q, _s, p, body) => h.updateContract(p.id, body ?? {}));
+  // Files in a workspace, for @-mentions in the message box.
+  route("GET", "/api/workspace-files", (req) => {
+    const pid = new URL(req.url ?? "/", "http://x").searchParams.get("projectId") || undefined;
+    const ws = store.workspaceFor(home, pid);
+    return [...snapshot(ws, 3000).keys()].map((f) => relative(ws, f).split(sep).join("/")).filter((f) => !f.startsWith("uploads/")).sort();
+  });
   route("GET", "/api/chats/:id/stream", (req, res, p) => {
     sseStart(res);
     let off: false | (() => void) = false;
@@ -159,7 +171,7 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   });
   route("POST", "/api/chats/:id/stop", (_q, _s, p) => ({ ok: h.stopChat(p.id) }));
   route("POST", "/api/chats/:id/rate", (_q, _s, p, body) => h.rate(p.id, body.turnId, body.rating ?? null, body.note));
-  route("POST", "/api/approvals/:id", (_q, _s, p, body) => ({ ok: h.resolveApproval(p.id, !!body?.allow) }));
+  route("POST", "/api/approvals/:id", (_q, _s, p, body) => ({ ok: body?.always ? h.allowAlways(p.id) : h.resolveApproval(p.id, !!body?.allow) }));
   route("POST", "/api/runs/:id/eval", async (_q, _s, p, body) => h.turnIntoEval(p.id, body?.rating ?? "down", body?.expectation));
   route("GET", "/api/runs", () => h.runs().slice(-200).reverse());
   route("GET", "/api/runs/:id", (_q, _s, p) => readTrace(home, p.id));

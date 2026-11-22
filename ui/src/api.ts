@@ -21,7 +21,75 @@ export interface Turn {
   files?: FileRef[];
   plan?: PlanStep[];
   durationMs?: number;
+  stopReason?: StopReason;
+  question?: { question: string; options: string[] };
+  checks?: CheckResult[];
+  recap?: Recap;
+  steering?: string[];
+  attachments?: Attachment[];
+  usage?: Usage;
   createdAt: string;
+}
+
+export interface Usage {
+  promptTokens: number;
+  completionTokens: number;
+  costUsd: number;
+  cachedTokens?: number;
+}
+
+export type StopReason = "done" | "budget" | "repeated_error" | "question" | "checks_failed";
+
+export interface Contract {
+  goal: string;
+  scope: string[];
+  never: string[];
+  doneWhen: { text: string; command?: string }[];
+  draft?: boolean;
+  updatedAt: string;
+}
+
+export interface CheckResult {
+  text: string;
+  command?: string;
+  status: "pass" | "fail" | "skipped" | "running";
+  exitCode?: number | string;
+  output?: string;
+}
+
+export interface Recap {
+  stopReason: StopReason;
+  filesChanged: number;
+  toolCalls: number;
+  failedCalls: number;
+  checks?: { passed: number; total: number };
+  unfinished: string[];
+}
+
+export interface Progress {
+  contract?: Contract;
+  done: string[];
+  current?: string;
+  decisions: string[];
+  deadEnds: string[];
+  blocked: string[];
+  checkpoints?: string[];
+  updatedAt?: string;
+}
+
+export interface Attachment {
+  name: string;
+  path: string;
+  kind: "image" | "document" | "text" | "other";
+  size: number;
+}
+
+export interface RunStatus {
+  step: number;
+  contextTokens: number;
+  contextWindow: number;
+  usage: Usage;
+  cachedTokens: number;
 }
 
 export interface PlanStep {
@@ -93,6 +161,7 @@ export interface Chat extends ChatSummary {
   repos?: RepoLink[];
   activeRepo?: string;
   running?: boolean;
+  progress?: Progress;
 }
 
 export interface Project {
@@ -190,7 +259,8 @@ export interface Config {
   providers: { name: string; baseUrl: string; apiKeyEnv?: string }[];
   defaults: { chatModel: string; taskModel: string; reflectorModel: string; judgeModel: string };
   budgets: { dailyUsd: { chat: number; tasks: number; evolve: number } };
-  approval: { autoAccept: { memory: boolean; skill: boolean }; yolo?: boolean; yoloTasks?: boolean };
+  approval: { autoAccept: { memory: boolean; skill: boolean }; yolo?: boolean; yoloTasks?: boolean; allowCommands?: string[]; taskCommands?: string[] };
+  agent?: { maxSteps: number; maxUsdPerRun?: number; maxMinutes?: number; gitCheckpoints?: boolean; lazyTools?: boolean };
   evolve: { samplesPerCase: number; maxAttempts: number; heldOutFraction: number };
   killSwitch: boolean;
   hasOpenRouterKey: boolean;
@@ -231,8 +301,12 @@ export type AgentEvent =
   | { type: "files"; files: FileRef[] }
   | { type: "plan"; steps: PlanStep[] }
   | { type: "note"; text: string; reset?: boolean }
+  | { type: "status"; step: number; contextTokens: number; contextWindow: number; usage: Usage; cachedTokens: number }
+  | { type: "steer"; text: string }
+  | { type: "contract"; contract: Contract }
+  | { type: "checks"; checks: CheckResult[] }
   | { type: "error"; error: string }
-  | { type: "run_end"; runId: string; content: string; status: string; usage: { promptTokens: number; completionTokens: number; costUsd: number } }
+  | { type: "run_end"; runId: string; content: string; status: string; usage: Usage; stopReason?: StopReason; recap?: Recap; question?: { question: string; options: string[] } }
   | { type: "step" | "message" };
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -251,7 +325,19 @@ export const api = {
 };
 
 /** Start a turn on the server. It runs in the background; follow it with followChat. */
-export const sendMessage = (chatId: string, text: string, model?: string) => api.post(`/chats/${chatId}/messages`, { text, model });
+export const sendMessage = (chatId: string, text: string, model?: string, extra: { attachments?: Attachment[]; mode?: "long" } = {}) => api.post(`/chats/${chatId}/messages`, { text, model, ...extra });
+
+/** Steer a running chat: the agent reads this at its next step. */
+export const queueMessage = (chatId: string, text: string) => api.post<{ ok: boolean; queued: number }>(`/chats/${chatId}/queue`, { text });
+
+/** Upload a file for the next message (read in the browser, sent as base64). */
+export async function uploadAttachment(chatId: string, file: File): Promise<Attachment> {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  const name = file.name && file.name !== "image.png" ? file.name : `pasted-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.${(file.type.split("/")[1] || "png").replace("jpeg", "jpg")}`;
+  return api.post<Attachment>(`/chats/${chatId}/attachments`, { name, data: btoa(bin) });
+}
 
 /** Follow a chat's current run: replays it from the start, then streams until it ends. Aborting only stops watching. */
 export async function followChat(chatId: string, onEvent: (e: AgentEvent) => void, signal?: AbortSignal) {
