@@ -14,3 +14,7 @@ Syph.exe.part*
 # Keys and Syph's own data never go in the repo
 secrets/
 .syph/
+# Xcode
+xcuserdata/
+*.xcuserstate
+ios/build/

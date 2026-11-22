@@ -77,6 +77,15 @@ Ask in chat, for example "add a button to connect my GitHub repos". Syph writes 
   - If the window itself fails, it offers to reopen in safe mode.
 - **Why your own app can't break:** these changes are declarative files in `~/.syph/ui/` drawn by Syph's own components. Syph never edits the app's code, so the changes also work in Syph.exe.
 
+### Syph on your iPhone
+
+The iPhone app (in `ios/`) is a chat bar and its answers, with Projects, Tasks, Evolve, Connectors and Settings in a menu you slide open from the left. It talks to Syph on your computer, so your models, files, keys and connectors stay there.
+
+- **Pair:** on the computer open **Settings → Phone** (or **Connect phone** in the sidebar) and press **Show QR code**. On the iPhone, open Syph and tap **Scan QR code**, or point the Camera app at the code. The phone and computer must be on the same Wi-Fi. A code works once and expires after 10 minutes.
+- **What works from the phone:** chats (with live plans, tool calls, timings and approvals), files Syph made (preview slides, docs, sheets, PDFs and images, or share them), linked GitHub repos (link, pull, push, switch the active one), projects, tasks, Evolve, connectors and settings.
+- **Security:** the phone talks to a second listener on port 7338. It only starts while a QR code is showing or a phone is paired. Every request needs the phone's own token (only its hash is stored, in `~/.syph/secrets/devices.json`). Browsers are refused, and a phone can't manage phones or open files on the computer's screen. Remove a phone in **Settings → Phone** to cut it off.
+- **Build it:** open `ios/Syph.xcodeproj` in Xcode (iOS 18 or later), pick your team under Signing & Capabilities, choose your iPhone and press Run. **Explore the demo** on the welcome screen tries the app without a computer.
+
 ## Running from source (Windows, macOS, Linux)
 
 You need [Node.js 22 or newer](https://nodejs.org).

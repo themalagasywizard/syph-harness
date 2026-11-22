@@ -19,10 +19,14 @@ async function main() {
   const h = await new Harness(homeDir).init({ scheduler: cmd === "serve" });
   switch (cmd) {
     case "serve": {
-      const server = createApp(h);
-      server.listen(port, "127.0.0.1", () => console.log(`Syph is running at http://localhost:${port}  (home: ${h.home.root})`));
+      const server = createApp(h, { phonePort: port + 1 });
+      server.listen(port, "127.0.0.1", () => {
+        console.log(`Syph is running at http://localhost:${port}  (home: ${h.home.root})`);
+        server.phone.init();
+      });
       const stop = async () => {
         await h.close();
+        server.phone.close();
         server.close();
         process.exit(0);
       };

@@ -1,4 +1,4 @@
-import { Clock, Dna, FolderClosed, Menu, Plug, Plus, Settings, Trash2 } from "lucide-react";
+import { Clock, Dna, FolderClosed, Menu, Plug, Plus, Settings, Smartphone, Trash2 } from "lucide-react";
 import { useApp, type View } from "../App";
 import { api } from "../api";
 import { Mark, Wordmark } from "./Logo";
@@ -58,7 +58,10 @@ export function Sidebar({ view, collapsed, toggle }: { view: View; collapsed: bo
       </div>
       {collapsed && <div style={{ flex: 1 }} />}
 
-      <div className="sidebar-foot nav">{item(view.kind === "settings", () => go({ kind: "settings" }), <Settings size={18} />, "Settings")}</div>
+      <div className="sidebar-foot nav">
+        {item(false, () => go({ kind: "settings" }), <Smartphone size={18} />, "Connect phone")}
+        {item(view.kind === "settings", () => go({ kind: "settings" }), <Settings size={18} />, "Settings")}
+      </div>
     </aside>
   );
 }

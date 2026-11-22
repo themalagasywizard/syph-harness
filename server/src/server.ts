@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { spawn } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import { PhoneAccess } from "./phone.ts";
 import { fileURLToPath } from "node:url";
 import {
   Harness,
@@ -35,7 +36,7 @@ type Handler = (req: IncomingMessage, res: ServerResponse, params: Record<string
 const UI_DIST = process.env.SYPH_UI_DIST ?? resolve(fileURLToPath(import.meta.url), "../../../ui/dist");
 const MIME: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".json": "application/json", ".woff2": "font/woff2" };
 
-export function createApp(h: Harness, opts: { uiDir?: string } = {}) {
+export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number } = {}) {
   const routes: { method: string; re: RegExp; keys: string[]; fn: Handler }[] = [];
   const route = (method: string, path: string, fn: Handler) => {
     const keys: string[] = [];
@@ -299,17 +300,34 @@ export function createApp(h: Harness, opts: { uiDir?: string } = {}) {
   route("POST", "/api/connectors/:id/disconnect", async (_q, _s, p) => (await C.disconnect(p.id), changed({ ok: true })));
   route("DELETE", "/api/connectors/:id", async (_q, _s, p) => (await C.remove(p.id), changed({ ok: true })));
 
-  const uiDir = opts.uiDir ?? UI_DIST;
+  // ----- Phone (QR pairing). Managing phones is only allowed from this computer. -----
+  route("GET", "/api/phone", () => phone.status());
+  route("POST", "/api/phone/pair", () => phone.startPairing());
+  route("DELETE", "/api/phone/pair", () => (phone.cancelPairing(), phone.status()));
+  route("DELETE", "/api/phone/devices/:id", (_q, _s, p) => (phone.removeDevice(p.id), phone.status()));
+  // Called by the phone itself with the code from the QR.
+  route("POST", "/api/pair", (_q, _s, _p, body) => phone.pair(body?.code, body?.name));
 
-  const server = createServer(async (req, res) => {
+  const uiDir = opts.uiDir ?? UI_DIST;
+  // Routes a phone may not call: managing phones, and opening things on this computer's screen.
+  const PHONE_BLOCKED = /^\/api\/(phone|files\/(open|reveal)$)/;
+
+  const handle = async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
-      // Only this machine's own pages may call the API: blocks other websites (and DNS rebinding)
-      // from driving Syph through the browser.
-      if (!localHost(req.headers.host) || (req.headers.origin && !localOrigin(req.headers.origin))) throw httpError(403, "Requests must come from Syph itself.");
-      const state = url.searchParams.get("state");
-      if (url.pathname === "/" && C.hasOAuthState(state)) return finishSignIn(state!, url, res);
-      if (!url.pathname.startsWith("/api/")) return serveStatic(uiDir, url.pathname, res);
+      if ((req as { viaLan?: boolean }).viaLan) {
+        // The phone listener: API only, no browsers, and every call but pairing needs a paired phone's token.
+        if (req.headers.origin) throw httpError(403, "Requests must come from the Syph app.");
+        if (!url.pathname.startsWith("/api/") || PHONE_BLOCKED.test(url.pathname)) throw httpError(404, "Not available to phones.");
+        if (!(req.method === "POST" && url.pathname === "/api/pair") && !phone.authenticate(req)) throw httpError(401, "This phone isn't paired with Syph. Scan the QR code in Settings → Phone on your computer.");
+      } else {
+        // Only this machine's own pages may call the API: blocks other websites (and DNS rebinding)
+        // from driving Syph through the browser.
+        if (!localHost(req.headers.host) || (req.headers.origin && !localOrigin(req.headers.origin))) throw httpError(403, "Requests must come from Syph itself.");
+        const state = url.searchParams.get("state");
+        if (url.pathname === "/" && C.hasOAuthState(state)) return finishSignIn(state!, url, res);
+        if (!url.pathname.startsWith("/api/")) return serveStatic(uiDir, url.pathname, res);
+      }
       const r = routes.find((r) => r.method === req.method && r.re.test(url.pathname));
       if (!r) throw httpError(404, `No route ${req.method} ${url.pathname}`);
       const m = r.re.exec(url.pathname)!;
@@ -322,7 +340,10 @@ export function createApp(h: Harness, opts: { uiDir?: string } = {}) {
       if (res.headersSent) return res.end();
       json(res, e.status ?? 500, { error: e.message ?? String(e) });
     }
-  });
+  };
+  const server = createServer(handle);
+  const phone = new PhoneAccess(h.home, handle, opts.phonePort ?? Number(process.env.SYPH_PHONE_PORT ?? 7338));
+  (server as typeof server & { phone: PhoneAccess }).phone = phone;
 
   async function finishSignIn(state: string, url: URL, res: ServerResponse) {
     let title = "Connected";
@@ -340,7 +361,7 @@ export function createApp(h: Harness, opts: { uiDir?: string } = {}) {
     res.end(`<!doctype html><meta charset="utf-8"><title>Syph · ${esc(title)}</title><style>body{font:16px system-ui,sans-serif;background:#0d0d0c;color:#ecebe6;display:grid;place-items:center;height:100vh;margin:0}main{max-width:420px;padding:24px;text-align:center}h1{font-weight:500;font-size:22px}p{color:#98978f;line-height:1.5}</style><main><h1>${esc(title)}</h1><p>${esc(text)}</p></main>`);
   }
 
-  return server;
+  return server as typeof server & { phone: PhoneAccess };
 }
 
 /**

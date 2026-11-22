@@ -4,6 +4,7 @@ import { Toggle } from "../components/Toggle";
 import { ModelPicker } from "../components/ModelPicker";
 import { OpenRouterKey } from "../components/OpenRouterKey";
 import { InterfaceSettings } from "../components/InterfaceSettings";
+import { PhonePairing } from "../components/PhonePairing";
 import { useApp } from "../App";
 import { api, type Config, type Profile } from "../api";
 
@@ -42,6 +43,11 @@ export function SettingsView() {
             <h2>Settings</h2>
             <p>Providers, models, budgets and how much Syph may change on its own. Stored in <code>{state.homePath}</code>.</p>
           </div>
+        </div>
+
+        <div className="section-label" style={{ paddingLeft: 0 }}>Phone</div>
+        <div style={{ marginBottom: 32 }}>
+          <PhonePairing />
         </div>
 
         <div className="section-label" style={{ paddingLeft: 0 }}>Model providers</div>
