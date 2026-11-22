@@ -1,0 +1,14 @@
+{
+  "id": "math-word",
+  "input": "A train leaves at 14:35 and arrives at 17:10. How long is the journey? Reply as H:MM only.",
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "^\\s*2:35\\s*$"
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "math"
+  ]
+}

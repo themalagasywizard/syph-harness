@@ -1,0 +1,19 @@
+{
+  "id": "fmt-table",
+  "input": "Make a markdown table of three planets with columns Planet and Moons. Output only the table.",
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "\\|\\s*Planet\\s*\\|\\s*Moons\\s*\\|",
+      "flags": "i"
+    },
+    {
+      "type": "regex",
+      "pattern": "\\|[- :]+\\|[- :]+\\|"
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "fmt"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "id": "reason-logic",
+  "input": "All bloops are razzies. All razzies are lazzies. Are all bloops definitely lazzies? Answer yes or no, then one sentence why.",
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "^\\W*yes",
+      "flags": "i"
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "reason"
+  ]
+}

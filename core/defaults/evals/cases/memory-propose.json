@@ -1,0 +1,14 @@
+{
+  "id": "memory-propose",
+  "input": "Remember that I prefer metric units in every answer.",
+  "checks": [
+    {
+      "type": "tool_called",
+      "name": "propose_memory"
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "memory"
+  ]
+}

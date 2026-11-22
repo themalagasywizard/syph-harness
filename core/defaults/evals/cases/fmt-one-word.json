@@ -1,0 +1,15 @@
+{
+  "id": "fmt-one-word",
+  "input": "Answer with a single word: what is the capital of Japan?",
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "^\\W*tokyo\\W*$",
+      "flags": "i"
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "fmt"
+  ]
+}

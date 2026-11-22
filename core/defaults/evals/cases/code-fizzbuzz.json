@@ -1,0 +1,18 @@
+{
+  "id": "code-fizzbuzz",
+  "input": "Write a Python function fizzbuzz(n) that returns a list of strings for 1..n with the usual rules. Output only a python code block.",
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "```python[\\s\\S]*def fizzbuzz"
+    },
+    {
+      "type": "judge",
+      "rubric": "Correct FizzBuzz: multiples of 15 -> FizzBuzz, 3 -> Fizz, 5 -> Buzz, else the number as string; returns a list for 1..n."
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "code"
+  ]
+}

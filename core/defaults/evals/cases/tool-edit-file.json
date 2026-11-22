@@ -1,0 +1,17 @@
+{
+  "id": "tool-edit-file",
+  "input": "In my workspace, change the greeting in app.js from 'Hi' to 'Welcome'. Don't change anything else.",
+  "checks": [
+    {
+      "type": "exec",
+      "command": "node -e \"const s=require('fs').readFileSync('app.js','utf8');process.exit(s.includes(\\\"'Welcome'\\\")&&s.includes('function greet')&&!s.includes(\\\"'Hi'\\\")?0:1)\""
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "tool"
+  ],
+  "files": {
+    "app.js": "function greet(name) {\n  return 'Hi' + ', ' + name;\n}\nmodule.exports = { greet };\n"
+  }
+}

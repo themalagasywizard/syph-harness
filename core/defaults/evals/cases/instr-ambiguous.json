@@ -1,0 +1,18 @@
+{
+  "id": "instr-ambiguous",
+  "input": "Write a haiku.",
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "\\n.+\\n"
+    },
+    {
+      "type": "max_words",
+      "value": 40
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "instr"
+  ]
+}

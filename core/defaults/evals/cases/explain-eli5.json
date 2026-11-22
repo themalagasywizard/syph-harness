@@ -1,0 +1,18 @@
+{
+  "id": "explain-eli5",
+  "input": "Explain recursion to a 10-year-old in three sentences.",
+  "checks": [
+    {
+      "type": "judge",
+      "rubric": "Three sentences, simple words, a concrete analogy, accurate."
+    },
+    {
+      "type": "max_words",
+      "value": 90
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "explain"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "math-percent",
+  "input": "A price rises from 80 to 92. By what percent did it rise? Reply with the number and % only.",
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "^\\s*15(\\.0+)?\\s*%\\s*$"
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "math"
+  ]
+}

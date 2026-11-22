@@ -1,0 +1,16 @@
+node_modules/
+ui/dist/
+.env
+.env.*
+!.env.example
+*.log
+*.tsbuildinfo
+desktop/app/
+desktop/dist/
+# Built app and its download pieces (rebuild with npm run dist)
+*.exe
+setup/
+Syph.exe.part*
+# Keys and Syph's own data never go in the repo
+secrets/
+.syph/

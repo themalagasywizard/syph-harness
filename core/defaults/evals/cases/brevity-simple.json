@@ -1,0 +1,19 @@
+{
+  "id": "brevity-simple",
+  "input": "What does HTTP stand for?",
+  "checks": [
+    {
+      "type": "contains",
+      "value": "Hypertext Transfer Protocol",
+      "caseSensitive": false
+    },
+    {
+      "type": "max_words",
+      "value": 40
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "brevity"
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "name": "@syph/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Syph desktop shell: starts the local server and opens it in a window, with a tray so Tasks keep running.",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.11.5",
+    "electron-builder": "^26.18.0"
+  },
+  "author": "Syph",
+  "build": {
+    "appId": "app.syph.desktop",
+    "productName": "Syph",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.cjs",
+      "assets/**",
+      "app/**"
+    ],
+    "asar": false,
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "Syph.exe"
+    },
+    "executableName": "Syph",
+    "compression": "maximum"
+  }
+}

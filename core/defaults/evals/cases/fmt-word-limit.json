@@ -1,0 +1,18 @@
+{
+  "id": "fmt-word-limit",
+  "input": "Explain what an API is in under 40 words.",
+  "checks": [
+    {
+      "type": "max_words",
+      "value": 40
+    },
+    {
+      "type": "judge",
+      "rubric": "Accurate, plain-language definition of an API."
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "fmt"
+  ]
+}

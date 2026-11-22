@@ -1,0 +1,18 @@
+{
+  "id": "tool-write-file",
+  "input": "Create a file hello.txt in my workspace containing exactly: Hello, Syph",
+  "checks": [
+    {
+      "type": "tool_called",
+      "name": "write_file"
+    },
+    {
+      "type": "exec",
+      "command": "node -e \"process.exit(require('fs').readFileSync('hello.txt','utf8').trim()==='Hello, Syph'?0:1)\""
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "tool"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "providers": [
+    { "name": "openrouter", "baseUrl": "https://openrouter.ai/api/v1", "apiKeyEnv": "OPENROUTER_API_KEY" },
+    { "name": "ollama", "baseUrl": "http://localhost:11434/v1" },
+    { "name": "lmstudio", "baseUrl": "http://localhost:1234/v1" }
+  ],
+  "defaults": {
+    "chatModel": "openrouter:deepseek/deepseek-v4.1-flash",
+    "taskModel": "openrouter:deepseek/deepseek-v4.1-flash",
+    "reflectorModel": "openrouter:deepseek/deepseek-v4-pro",
+    "judgeModel": "openrouter:deepseek/deepseek-v4-pro"
+  },
+  "budgets": { "dailyUsd": { "chat": 2, "tasks": 1, "evolve": 2 } },
+  "approval": { "autoAccept": { "memory": false, "skill": false }, "yolo": false, "yoloTasks": false },
+  "evolve": { "samplesPerCase": 2, "maxAttempts": 3, "heldOutFraction": 0.2 },
+  "killSwitch": false,
+  "mcpServers": [],
+  "agent": { "maxSteps": 12 }
+}

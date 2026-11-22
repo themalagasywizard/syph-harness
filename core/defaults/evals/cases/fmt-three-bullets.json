@@ -1,0 +1,19 @@
+{
+  "id": "fmt-three-bullets",
+  "input": "Give exactly three bullet points on why unit tests matter. Use '- ' for each bullet and nothing else.",
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "^(- .+\\n?){3}$",
+      "flags": "m"
+    },
+    {
+      "type": "max_words",
+      "value": 90
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "fmt"
+  ]
+}

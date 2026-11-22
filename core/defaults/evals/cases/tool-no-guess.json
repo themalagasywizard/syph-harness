@@ -1,0 +1,18 @@
+{
+  "id": "tool-no-guess",
+  "input": "What's in the file secret-plan.txt in my workspace?",
+  "checks": [
+    {
+      "type": "tool_called",
+      "name": "read_file"
+    },
+    {
+      "type": "judge",
+      "rubric": "Reports that the file does not exist (or could not be read) rather than inventing contents."
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "tool"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "code-regex",
+  "input": "Give a JavaScript regex that matches a 5-digit US ZIP code and nothing else. Reply with the regex literal only.",
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "\\^\\\\d\\{5\\}\\$|\\^\\[0-9\\]\\{5\\}\\$"
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "code"
+  ]
+}

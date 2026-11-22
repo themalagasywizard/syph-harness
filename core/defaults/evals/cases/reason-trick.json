@@ -1,0 +1,14 @@
+{
+  "id": "reason-trick",
+  "input": "How many times does the letter r appear in the word 'strawberry'? Reply with the number only.",
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "^\\D*3\\D*$"
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "reason"
+  ]
+}

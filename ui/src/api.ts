@@ -1,0 +1,260 @@
+// Thin client for the Syph server. Shapes mirror @syph/core types.
+export type Role = "user" | "assistant";
+
+export interface ToolCallView {
+  id: string;
+  name: string;
+  args: unknown;
+  result?: string;
+  ok?: boolean;
+  ms?: number;
+}
+
+export interface Turn {
+  id: string;
+  role: Role;
+  content: string;
+  runId?: string;
+  model?: string;
+  toolCalls?: ToolCallView[];
+  rating?: "up" | "down";
+  files?: FileRef[];
+  createdAt: string;
+}
+
+export interface FileRef {
+  path: string;
+  name: string;
+  action: "created" | "modified";
+  size: number;
+  rel?: string;
+  exists?: boolean;
+}
+
+export interface RepoLink {
+  name: string;
+  url: string;
+  path: string;
+  connector?: string;
+  connectedAt: string;
+}
+
+export interface ChatSummary {
+  id: string;
+  title: string;
+  projectId?: string;
+  model?: string;
+  updatedAt: string;
+  /** Set while the chat is working on the server: "waiting" means it needs an approval. */
+  status?: "running" | "waiting";
+}
+
+export interface Chat extends ChatSummary {
+  turns: Turn[];
+  running?: boolean;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+  updatedAt: string;
+  chatCount?: number;
+  taskCount?: number;
+  repos?: RepoLink[];
+}
+
+export interface ProjectDetail extends Project {
+  /** Absolute path of the project's folder on this computer. */
+  folder: string;
+  instructions: string;
+  files: string[];
+  chats: ChatSummary[];
+  tasks: Task[];
+}
+
+export interface Task {
+  id: string;
+  name: string;
+  prompt: string;
+  schedule: string;
+  projectId?: string;
+  model?: string;
+  enabled: boolean;
+  lastRun?: string;
+  lastStatus: "ok" | "error" | "running" | "never";
+  lastChatId?: string;
+  nextRun?: string | null;
+  scheduleText?: string;
+}
+
+export interface GateResult {
+  baseline: number;
+  candidate: number;
+  delta: number;
+  targetedBaseline: number;
+  targetedCandidate: number;
+  heldOutBaseline: number;
+  heldOutCandidate: number;
+  regressions: string[];
+  passed: boolean;
+  notes: string[];
+  model: string;
+}
+
+export interface Proposal {
+  id: string;
+  kind: "memory" | "skill" | "prompt" | "profile" | "strategy" | "extension" | "ui";
+  changes?: { path: string; before: string | null; after: string | null }[];
+  title: string;
+  reason: string;
+  diff: string;
+  source: "agent" | "reflector" | "user";
+  gate?: GateResult;
+  status: "pending" | "accepted" | "rejected" | "failed" | "rolled_back";
+  createdAt: string;
+  decidedAt?: string;
+}
+
+export interface Job {
+  id: string;
+  kind: string;
+  title: string;
+  status: "running" | "done" | "error";
+  log: string[];
+  result?: any;
+  startedAt: string;
+}
+
+export interface ModelInfo {
+  ref: string;
+  label: string;
+  provider: string;
+  contextWindow?: number;
+  tools?: boolean;
+}
+
+export interface Profile {
+  id: string;
+  contextWindow: number;
+  nativeTools: boolean;
+  strategy: string;
+  fewShot: number;
+  temperature?: number;
+  escalateTo?: string;
+}
+
+export interface Config {
+  providers: { name: string; baseUrl: string; apiKeyEnv?: string }[];
+  defaults: { chatModel: string; taskModel: string; reflectorModel: string; judgeModel: string };
+  budgets: { dailyUsd: { chat: number; tasks: number; evolve: number } };
+  approval: { autoAccept: { memory: boolean; skill: boolean }; yolo?: boolean; yoloTasks?: boolean };
+  evolve: { samplesPerCase: number; maxAttempts: number; heldOutFraction: number };
+  killSwitch: boolean;
+  hasOpenRouterKey: boolean;
+}
+
+export interface AppState {
+  config: Config;
+  projects: Project[];
+  chats: ChatSummary[];
+  pendingProposals: number;
+  spend: { chat: number; tasks: number; evolve: number };
+  strategies: { name: string; description: string }[];
+  skills: { name: string; description: string }[];
+  extensions: { name: string; ok: boolean; error?: string; tools: string[] }[];
+  mcp: { name: string; tools: string[]; error?: string }[];
+  homePath: string;
+}
+
+export interface EvalSummary {
+  id: string;
+  model: string;
+  startedAt: string;
+  score: number;
+  heldOutScore: number;
+  cases: { id: string; score: number; heldOut: boolean; notes: string[] }[];
+}
+
+export type AgentEvent =
+  | { type: "run_start"; runId: string; model: string; strategy: string }
+  | { type: "token"; text: string }
+  | { type: "tool_call"; id: string; name: string; args: unknown }
+  | { type: "tool_result"; id: string; name: string; ok: boolean; result: string; ms: number }
+  | { type: "approval_request"; id: string; tool: string; args: unknown; reason: string }
+  | { type: "approval_done"; id: string; allow: boolean; auto?: boolean }
+  | { type: "idle" }
+  | { type: "files"; files: FileRef[] }
+  | { type: "note"; text: string; reset?: boolean }
+  | { type: "error"; error: string }
+  | { type: "run_end"; runId: string; content: string; status: string; usage: { promptTokens: number; completionTokens: number; costUsd: number } }
+  | { type: "step" | "message" };
+
+async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`/api${path}`, { method, headers: body !== undefined ? { "content-type": "application/json" } : {}, body: body !== undefined ? JSON.stringify(body) : undefined });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? res.statusText);
+  return data as T;
+}
+
+export const api = {
+  get: <T>(p: string) => req<T>("GET", p),
+  post: <T>(p: string, b: unknown = {}) => req<T>("POST", p, b),
+  put: <T>(p: string, b: unknown) => req<T>("PUT", p, b),
+  patch: <T>(p: string, b: unknown) => req<T>("PATCH", p, b),
+  del: <T>(p: string) => req<T>("DELETE", p),
+};
+
+/** Start a turn on the server. It runs in the background; follow it with followChat. */
+export const sendMessage = (chatId: string, text: string, model?: string) => api.post(`/chats/${chatId}/messages`, { text, model });
+
+/** Follow a chat's current run: replays it from the start, then streams until it ends. Aborting only stops watching. */
+export async function followChat(chatId: string, onEvent: (e: AgentEvent) => void, signal?: AbortSignal) {
+  const res = await fetch(`/api/chats/${chatId}/stream`, { signal });
+  if (!res.ok || !res.body) throw new Error(`Request failed: ${res.status}`);
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i: number;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const chunk = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      const line = chunk.split("\n").find((l) => l.startsWith("data: "));
+      if (line) onEvent(JSON.parse(line.slice(6)));
+    }
+  }
+}
+
+export function subscribe(onEvent: (e: any) => void) {
+  const es = new EventSource("/api/events");
+  es.onmessage = (m) => onEvent(JSON.parse(m.data));
+  return () => es.close();
+}
+
+export const modelLabel = (ref?: string) => {
+  if (!ref) return "";
+  const i = ref.indexOf(":");
+  const provider = i > 0 ? ref.slice(0, i) : "openrouter";
+  const model = i > 0 ? ref.slice(i + 1) : ref;
+  if (provider !== "openrouter") return `${model} · ${provider}`;
+  const name = model.split("/").pop()!;
+  return name.replace(/^deepseek-/, "DeepSeek ").replace(/-/g, " ").replace(/\b(\w)/g, (c) => c.toUpperCase());
+};
+
+export function relTime(iso?: string | null) {
+  if (!iso) return "";
+  const d = new Date(iso).getTime();
+  const diff = (Date.now() - d) / 1000;
+  const fut = diff < 0;
+  const s = Math.abs(diff);
+  const f = (n: number, u: string) => (fut ? `in ${n} ${u}` : `${n} ${u} ago`);
+  if (s < 60) return fut ? "in under a minute" : "just now";
+  if (s < 3600) return f(Math.round(s / 60), "min");
+  if (s < 86400) return f(Math.round(s / 3600), "h");
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}

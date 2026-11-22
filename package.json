@@ -1,0 +1,24 @@
+{
+  "name": "syph",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "core",
+    "server",
+    "ui",
+    "desktop"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "start": "npm run build -w ui && npm start -w server",
+    "desktop": "npm run build -w ui && npm start -w @syph/desktop",
+    "test": "npm test -w core",
+    "typecheck": "tsc -p core --noEmit && tsc -p server --noEmit && tsc -p ui --noEmit",
+    "syph": "tsx server/src/cli.ts",
+    "dist": "npm run build -w ui && node scripts/build-app.mjs && npm run dist -w @syph/desktop"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

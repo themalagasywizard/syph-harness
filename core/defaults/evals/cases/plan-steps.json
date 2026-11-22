@@ -1,0 +1,19 @@
+{
+  "id": "plan-steps",
+  "input": "Give me a numbered 4-step plan to back up a laptop to an external drive.",
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "^\\s*1[.)][\\s\\S]*^\\s*4[.)]",
+      "flags": "m"
+    },
+    {
+      "type": "not_contains",
+      "value": "5."
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "plan"
+  ]
+}

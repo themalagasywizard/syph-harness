@@ -1,0 +1,14 @@
+{
+  "id": "math-arith",
+  "input": "What is 17 * 23? Reply with the number only.",
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "^\\D*391\\D*$"
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "math"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "writing-email",
+  "input": "Write a two-sentence email to my landlord saying the kitchen tap is leaking and asking when someone can fix it.",
+  "checks": [
+    {
+      "type": "judge",
+      "rubric": "Exactly or about two sentences in the body, polite, mentions the leaking kitchen tap and asks when it can be fixed."
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "writing"
+  ]
+}

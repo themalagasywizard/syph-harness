@@ -1,0 +1,21 @@
+{
+  "id": "tool-list-then-read",
+  "input": "There is a notes file somewhere in my workspace. What is the deadline mentioned in it?",
+  "checks": [
+    {
+      "type": "tool_called",
+      "name": "list_files"
+    },
+    {
+      "type": "contains",
+      "value": "March 3"
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "tool"
+  ],
+  "files": {
+    "docs/notes-2026.md": "# Notes\nThe launch deadline is March 3.\n"
+  }
+}

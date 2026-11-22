@@ -1,0 +1,21 @@
+{
+  "id": "tool-read-file",
+  "input": "What is the value of PORT in config.env in my workspace?",
+  "checks": [
+    {
+      "type": "tool_called",
+      "name": "read_file"
+    },
+    {
+      "type": "contains",
+      "value": "8421"
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "tool"
+  ],
+  "files": {
+    "config.env": "HOST=localhost\nPORT=8421\nDEBUG=false\n"
+  }
+}

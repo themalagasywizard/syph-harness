@@ -1,0 +1,14 @@
+{
+  "id": "code-bug",
+  "input": "This JavaScript should sum an array but returns NaN: `function sum(a){let t;for(const x of a)t+=x;return t}`. What is the bug? One sentence and the fixed line.",
+  "checks": [
+    {
+      "type": "judge",
+      "rubric": "Identifies that t is undefined (not initialised to 0) and fixes with let t = 0."
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "code"
+  ]
+}

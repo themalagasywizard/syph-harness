@@ -1,0 +1,17 @@
+{
+  "id": "tool-count-lines",
+  "input": "How many lines does data.csv in my workspace have, including the header? Reply with the number.",
+  "checks": [
+    {
+      "type": "contains",
+      "value": "6"
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "tool"
+  ],
+  "files": {
+    "data.csv": "name,age\nana,31\nbo,25\ncy,40\ndee,29\neve,35\n"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "instr-lead-answer",
+  "input": "Should I use a list or a set in Python to check membership in a large collection? Be brief.",
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "^\\W*(use (a )?)?set",
+      "flags": "i"
+    },
+    {
+      "type": "max_words",
+      "value": 80
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "instr"
+  ]
+}

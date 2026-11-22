@@ -1,0 +1,18 @@
+{
+  "id": "fmt-json-keys",
+  "input": "Return a JSON object describing Paris with keys city, country and population. Output only the JSON.",
+  "checks": [
+    {
+      "type": "json",
+      "requiredKeys": [
+        "city",
+        "country",
+        "population"
+      ]
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "fmt"
+  ]
+}

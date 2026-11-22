@@ -1,0 +1,26 @@
+{
+  "id": "skill-summarise",
+  "input": "Summarise this: 'The city council voted 7-2 on Tuesday to fund a new bike lane network costing $4.2 million. Construction starts in May and will add 18 km of protected lanes. Opponents cited parking losses.'",
+  "checks": [
+    {
+      "type": "contains",
+      "value": "4.2"
+    },
+    {
+      "type": "contains",
+      "value": "18"
+    },
+    {
+      "type": "max_words",
+      "value": 110
+    },
+    {
+      "type": "judge",
+      "rubric": "Opens with one sentence giving the main point, then a few short bullets; keeps numbers exact."
+    }
+  ],
+  "createdAt": "2026-11-22T00:00:00.000Z",
+  "tags": [
+    "skill"
+  ]
+}
