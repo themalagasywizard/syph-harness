@@ -2,7 +2,8 @@
 // the checks agree (contract card), what it needs from you (question and continue cards), and
 // what actually happened (recap). Everything shown here comes from the harness, not the model.
 import { useEffect, useState } from "react";
-import { AlertTriangle, CircleCheck, CircleDashed, CircleX, FileDiff, Flag, HelpCircle, Loader2, PauseCircle, Pencil, Play, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { AlertTriangle, CircleCheck, CreditCard, ExternalLink, RotateCcw, CircleDashed, CircleX, FileDiff, Flag, HelpCircle, Loader2, PauseCircle, Pencil, Play, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { resetsIn, useUsage } from "./UsageBar";
 import { api, type CheckResult, type Contract, type Progress, type Recap, type RunStatus, type StopReason, type Turn } from "../api";
 
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n));
@@ -168,6 +169,57 @@ const STOP_COPY: Partial<Record<StopReason, { title: string; text: string; actio
   repeated_error: { title: "Stopped: the same error came back", text: "Another identical attempt wouldn't help. Answer what it needs, or let it try a different way.", action: "Try a different approach", message: "Try a different approach to the error you hit. Don't repeat the same fix." },
   checks_failed: { title: "Checks still failing", text: "Syph tried to fix them and stopped. See the contract above for the output.", action: "Keep fixing", message: "The done-when checks are still failing. Keep fixing the cause." },
 };
+
+const BILLING: Record<string, { name: string; href: string }> = {
+  openrouter: { name: "OpenRouter", href: "https://openrouter.ai/settings/credits" },
+  minimax: { name: "MiniMax", href: "https://platform.minimax.io/console/plan" },
+};
+
+/** The provider account ran out of credit: say so plainly, link to top up, and offer a retry. */
+export function CreditsCard({ failure, onRetry, disabled }: { failure: NonNullable<Turn["failure"]>; onRetry?: () => void; disabled?: boolean }) {
+  const billing = BILLING[failure.provider];
+  const name = billing?.name ?? failure.provider;
+  // A MiniMax plan that hit its window limit comes back on its own: say when, rather than "add credits".
+  const { usage } = useUsage(failure.provider === "minimax" ? "minimax" : undefined);
+  const spent = usage?.meters.filter((m) => m.total > 0 && m.used >= m.total).sort((a, b) => (b.resetsAt ?? 0) - (a.resetsAt ?? 0))[0];
+  if (spent) {
+    return (
+      <div className="credits-card">
+        <div className="cc-icon"><CreditCard size={18} /></div>
+        <div className="cc-text">
+          <b>You've reached your MiniMax plan limit</b>
+          <span className="hint">
+            The {spent.label.toLowerCase()} is used up{spent.resetsAt ? ` and resets ${resetsIn(spent.resetsAt)}` : ""}. Try again then, or add credits to keep going now. Your message is kept.
+          </span>
+          <div className="cc-actions">
+            {billing && <a className="btn primary sm" href={billing.href} target="_blank" rel="noreferrer"><ExternalLink size={13} /> Add credits</a>}
+            {onRetry && <button className="btn tonal sm" disabled={disabled} onClick={onRetry}><RotateCcw size={13} /> Try again</button>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="credits-card">
+      <div className="cc-icon"><CreditCard size={18} /></div>
+      <div className="cc-text">
+        <b>You're out of {name} credits</b>
+        <span className="hint">
+          {failure.affordable !== undefined && failure.affordable > 0
+            ? `What's left covers about ${failure.affordable.toLocaleString()} tokens, which isn't enough for a reply. `
+            : "There isn't enough balance left for a reply. "}
+          Top up your {name} account, then try again. Your message is kept.
+        </span>
+        <div className="cc-actions">
+          {billing && (
+            <a className="btn primary sm" href={billing.href} target="_blank" rel="noreferrer"><ExternalLink size={13} /> Add credits</a>
+          )}
+          {onRetry && <button className="btn tonal sm" disabled={disabled} onClick={onRetry}><RotateCcw size={13} /> Try again</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** When a run ends early, say why and offer the one obvious next step. */
 export function StopCard({ reason, onContinue, disabled }: { reason?: StopReason; onContinue: (message: string) => void; disabled?: boolean }) {

@@ -30,6 +30,9 @@ import {
   snapshot,
   type AgentEvent,
   MINIMAX_DEFAULT,
+  miniMaxUsage,
+  openRouterUsage,
+  type ProviderUsage,
 } from "@syph/core";
 
 type Handler = (req: IncomingMessage, res: ServerResponse, params: Record<string, string>, body: any) => unknown | Promise<unknown>;
@@ -132,6 +135,32 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   route("DELETE", "/api/keys/minimax", () => {
     home.setEnv(MM, null);
     return mmStatus();
+  });
+
+  // ----- Usage: MiniMax plan windows and OpenRouter credit, cached briefly so the bar can poll -----
+  const usageCache = new Map<string, Promise<ProviderUsage>>();
+  const usageAt = new Map<string, number>();
+  route("GET", "/api/usage/:provider", (req, _s, p) => {
+    const provider = p.provider;
+    const fresh = qs(req).get("fresh") === "1";
+    const model = qs(req).get("model") ?? undefined;
+    const cacheKey = `${provider}:${model ?? ""}`;
+    if (!fresh && usageCache.has(cacheKey) && Date.now() - (usageAt.get(cacheKey) ?? 0) < 60_000) return usageCache.get(cacheKey)!;
+    let job: Promise<ProviderUsage>;
+    if (provider === "minimax") {
+      const key = home.env(MM);
+      if (!key) return { provider, meters: [], checkedAt: Date.now(), error: "No MiniMax key saved." };
+      job = miniMaxUsage(home, { key, baseUrl: mmBase(), model });
+    } else if (provider === "openrouter") {
+      const key = home.env(KEY);
+      if (!key) return { provider, meters: [], checkedAt: Date.now(), error: "No OpenRouter key saved." };
+      const base = home.config().providers.find((x) => x.name === "openrouter")?.baseUrl;
+      job = openRouterUsage({ key, baseUrl: base });
+    } else throw httpError(404, `No usage for ${provider}`);
+    usageCache.set(cacheKey, job);
+    usageAt.set(cacheKey, Date.now());
+    job.catch(() => usageCache.delete(cacheKey));
+    return job;
   });
 
   route("GET", "/api/profiles/:ref", (_q, _s, p) => h.profileFresh(decodeURIComponent(p.ref)));
