@@ -89,6 +89,7 @@ export async function complete(home: Home, call: LlmCall): Promise<LlmResult> {
     maxTokens: call.maxTokens,
     jsonMode: call.jsonMode,
     provider: resolved.provider,
+    effort: cat !== "evolve" && config.defaults.effort && config.defaults.effort !== "auto" ? config.defaults.effort : undefined,
     cache: resolved.provider === "openrouter" && /^(anthropic|google)\//.test(resolved.model),
     signal: call.signal,
     onToken: native || !call.tools?.length ? call.onToken : textToolStreamFilter(call.onToken),

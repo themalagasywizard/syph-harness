@@ -788,7 +788,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             <RepoComposerMenu chatId={cid} projectId={projectId} ensureChat={ensureChat} iconOnly />
             <Slot name="chat.composer" ctx={slotCtx} />
             <div className="spacer" />
-            <ModelPicker value={model} onChange={setModel} />
+            <ModelPicker value={model} onChange={setModel} effort />
             {live && draft.trim() && <button className="send ready" onClick={() => send()} aria-label="Send to the running task" title="Syph reads it at its next step"><CornerDownRight size={18} /></button>}
             {live ? (
               <button className="send ready" onClick={stop} aria-label="Stop"><Square size={14} fill="currentColor" /></button>

@@ -267,7 +267,7 @@ export interface Profile {
 
 export interface Config {
   providers: { name: string; baseUrl: string; apiKeyEnv?: string }[];
-  defaults: { chatModel: string; taskModel: string; reflectorModel: string; judgeModel: string };
+  defaults: { chatModel: string; taskModel: string; reflectorModel: string; judgeModel: string; effort?: Effort };
   budgets: { dailyUsd: { chat: number; tasks: number; evolve: number } };
   approval: { autoAccept: { memory: boolean; skill: boolean }; yolo?: boolean; yoloTasks?: boolean; allowCommands?: string[]; taskCommands?: string[] };
   agent?: { shortSteps?: number; maxUsdPerRun?: number; maxMinutes?: number; longSteps?: number; longMinutes?: number; maxUsdPerLongRun?: number; reviewAfterErrors?: number; gitCheckpoints?: boolean; lazyTools?: boolean };
@@ -400,3 +400,5 @@ export function relTime(iso?: string | null) {
   if (s < 86400) return f(Math.round(s / 3600), "h");
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
+
+export type Effort = "auto" | "low" | "medium" | "high" | "xhigh" | "max";

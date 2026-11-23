@@ -14,6 +14,8 @@ export interface CompletionRequest {
   cache?: boolean;
   /** Provider name from config, for the few wire differences between providers (see once()). */
   provider?: string;
+  /** Reasoning effort; left out when unset or "auto". */
+  effort?: string;
   signal?: AbortSignal;
   onToken?: (t: string) => void;
 }
@@ -84,7 +86,10 @@ async function once(req: CompletionRequest): Promise<CompletionResult> {
     // MiniMax (platform.minimax.io, OpenAI-compatible): thinking comes back in reasoning_content and
     // must be sent back with the tool calls it led to. It has no JSON mode, so JSON is asked for in the prompt.
     body.reasoning_split = true;
+    if (req.effort) body.reasoning_effort = req.effort; // low, medium, high, xhigh, max
   } else {
+    // OpenRouter takes low, medium or high and maps it onto each model's own reasoning setting.
+    if (req.effort && req.provider === "openrouter") body.reasoning = { effort: req.effort === "low" || req.effort === "medium" ? req.effort : "high" };
     body.usage = { include: true }; // OpenRouter: report cost
     if (req.jsonMode) body.response_format = { type: "json_object" };
   }

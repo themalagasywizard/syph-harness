@@ -109,6 +109,8 @@ export interface ModelProfile {
   costPerMTokOut?: number;
 }
 
+export type Effort = "auto" | "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface ProviderConfig {
   name: string;
   baseUrl: string;
@@ -122,6 +124,8 @@ export interface SyphConfig {
     taskModel: string;
     reflectorModel: string;
     judgeModel: string;
+    /** How hard reasoning models think in chats and tasks. Unset or "auto" leaves it to the provider. */
+    effort?: Effort;
   };
   budgets: { dailyUsd: { chat: number; tasks: number; evolve: number } };
   approval: {

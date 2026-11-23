@@ -66,6 +66,19 @@ test("MiniMax calls keep its thinking for tool calls and skip OpenRouter-only fi
     assert.equal(bodies[2].messages[1].reasoning_content, undefined, "other providers never see it");
     assert.deepEqual(bodies[2].usage, { include: true });
 
+    // The effort setting reaches MiniMax as reasoning_effort and OpenRouter-style providers not at all here.
+    home.saveConfig({ defaults: { ...home.config().defaults, effort: "low" } });
+    await complete(home, { model: MINIMAX_DEFAULT, messages: [{ role: "user", content: "hi" }], category: "chat" });
+    assert.equal(bodies[3].reasoning_effort, "low");
+    await complete(home, { model: MINIMAX_DEFAULT, messages: [{ role: "user", content: "hi" }], category: "evolve" });
+    assert.equal(bodies[4].reasoning_effort, undefined, "evals and the reflector keep the provider's default");
+    await complete(home, { model: "other:some-model", messages: [{ role: "user", content: "hi" }] });
+    assert.equal(bodies[5].reasoning_effort, undefined);
+    assert.equal(bodies[5].reasoning, undefined);
+    home.saveConfig({ defaults: { ...home.config().defaults, effort: "auto" } });
+    await complete(home, { model: MINIMAX_DEFAULT, messages: [{ role: "user", content: "hi" }] });
+    assert.equal(bodies[6].reasoning_effort, undefined, "auto sends nothing");
+
     const models = await listModels(home);
     assert.deepEqual(models.filter((m) => m.provider === "minimax").map((m) => m.ref), ["minimax:MiniMax-M3.1-Flash", "minimax:MiniMax-M3", "minimax:MiniMax-Next"]);
   } finally {
