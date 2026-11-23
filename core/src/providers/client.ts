@@ -58,6 +58,39 @@ export class ProviderError extends Error {
   }
 }
 
+/** The provider account has run out of credit (OpenRouter 402, MiniMax "insufficient balance", …). */
+export class CreditsError extends ProviderError {
+  constructor(
+    readonly provider: string,
+    /** Tokens the remaining balance still covers, when the provider says (OpenRouter does). */
+    readonly affordable?: number,
+    /** Tokens the request asked for, when the provider says. */
+    readonly requested?: number,
+  ) {
+    super(`Out of ${providerName(provider)} credits.`, 402, false);
+  }
+}
+
+export function providerName(provider: string) {
+  return provider === "openrouter" ? "OpenRouter" : provider === "minimax" ? "MiniMax" : provider;
+}
+
+const CREDIT_TEXT = /requires more credits|can only afford|insufficient (account )?(balance|credits?|funds|quota)|out of credits|balance (is )?(not enough|insufficient)|exceeded your current quota|payment required|usage limit (exceeded|reached)|plan limit/i;
+
+/** Turn a provider failure into a CreditsError when it is one, so the chat can say so plainly. */
+export function asCreditsError(e: unknown, provider: string): CreditsError | null {
+  if (e instanceof CreditsError) return e;
+  if (!(e instanceof ProviderError)) return null;
+  const text = e.message;
+  // MiniMax reports a low balance as status 1008 in base_resp.
+  if (e.status !== 402 && !CREDIT_TEXT.test(text) && !/status_code"?\s*:?\s*(1008|2056)\b/.test(text)) return null;
+  const num = (re: RegExp) => {
+    const m = re.exec(text);
+    return m ? Number(m[1]) : undefined;
+  };
+  return new CreditsError(provider, num(/can only afford (\d+)/i), num(/requested up to (\d+)/i));
+}
+
 export const httpTransport: Transport = async (req) => {
   let lastErr: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -131,6 +164,24 @@ async function stream(req: CompletionRequest, body: Record<string, unknown>, sig
     const text = await res.text().catch(() => "");
     throw new ProviderError(`${res.status} ${res.statusText}: ${text.slice(0, 500)}`, res.status, res.status === 429 || res.status >= 500);
   }
+  // Some providers (MiniMax) answer an error with a 200 and a plain JSON body instead of a stream.
+  if (/application\/json/i.test(res.headers.get("content-type") ?? "")) {
+    const text = await res.text().catch(() => "");
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = null;
+    }
+    const code = json?.base_resp?.status_code;
+    if (json?.error || (code && code !== 0)) throw new ProviderError(json.error?.message ?? `${json.base_resp.status_msg ?? "error"} (status_code ${code})`, json.error?.code ?? (code === 1008 ? 402 : undefined), false);
+    if (json?.choices) {
+      const msg = json.choices[0]?.message ?? {};
+      if (msg.content) req.onToken?.(msg.content);
+      return { content: msg.content ?? "", toolCalls: msg.tool_calls ?? [], promptTokens: json.usage?.prompt_tokens ?? 0, completionTokens: json.usage?.completion_tokens ?? 0, finishReason: json.choices[0]?.finish_reason };
+    }
+    throw new ProviderError(`Unexpected reply: ${text.slice(0, 300)}`, res.status, false);
+  }
 
   let content = "";
   let reasoning = "";
@@ -155,7 +206,8 @@ async function stream(req: CompletionRequest, body: Record<string, unknown>, sig
       } catch {
         continue;
       }
-      if (json.error) throw new ProviderError(json.error.message ?? JSON.stringify(json.error), json.error.code, false);
+      if (json.error) throw new ProviderError(json.error.message ?? JSON.stringify(json.error), typeof json.error.code === "number" ? json.error.code : undefined, false);
+      if (json.base_resp?.status_code) throw new ProviderError(`${json.base_resp.status_msg ?? "error"} (status_code ${json.base_resp.status_code})`, json.base_resp.status_code === 1008 ? 402 : undefined, false);
       const choice = json.choices?.[0];
       const delta = choice?.delta;
       if (typeof delta?.reasoning_content === "string") reasoning += delta.reasoning_content;

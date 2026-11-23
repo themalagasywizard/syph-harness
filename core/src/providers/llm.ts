@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Home } from "../home.ts";
 import type { ChatMessage, ToolCall } from "../types.ts";
 import { readJson, today, writeJson } from "../util.ts";
-import { httpTransport, type CompletionResult, type Transport } from "./client.ts";
+import { asCreditsError, httpTransport, type CompletionRequest, type CompletionResult, type Transport } from "./client.ts";
 import { getProfile, resolveModel } from "./models.ts";
 
 export type BudgetCategory = "chat" | "tasks" | "evolve";
@@ -46,6 +46,9 @@ export function registerMockModel(name: string, t: Transport) {
 
 export class BudgetError extends Error {}
 
+/** Below this many tokens a reply is too short to be useful, so a low balance counts as out of credit. */
+export const MIN_REPLY_TOKENS = 1024;
+
 export function spendToday(home: Home): Record<BudgetCategory, number> {
   return readJson(join(home.ledgerDir, `spend-${today()}.json`), { chat: 0, tasks: 0, evolve: 0 });
 }
@@ -79,7 +82,7 @@ export async function complete(home: Home, call: LlmCall): Promise<LlmResult> {
       ? mockModels.get(resolved.model) ?? (() => Promise.reject(new Error(`No mock model "${resolved.model}"`)))
       : httpTransport);
 
-  const res = await transport({
+  const req: CompletionRequest = {
     baseUrl: resolved.baseUrl,
     apiKey: resolved.apiKey,
     model: resolved.model,
@@ -93,7 +96,23 @@ export async function complete(home: Home, call: LlmCall): Promise<LlmResult> {
     cache: resolved.provider === "openrouter" && /^(anthropic|google)\//.test(resolved.model),
     signal: call.signal,
     onToken: native || !call.tools?.length ? call.onToken : textToolStreamFilter(call.onToken),
-  });
+  };
+  let res: CompletionResult;
+  try {
+    res = await transport(req);
+  } catch (e) {
+    const credits = asCreditsError(e, resolved.provider);
+    if (!credits) throw e;
+    // The balance can't cover the model's full reply length but still covers a reply: ask for one that
+    // fits (what OpenRouter itself suggests) instead of failing. Below that, it is truly out of credit.
+    const fits = credits.affordable !== undefined ? credits.affordable - 64 : 0;
+    if (fits < MIN_REPLY_TOKENS || (req.maxTokens !== undefined && req.maxTokens <= fits)) throw credits;
+    try {
+      res = await transport({ ...req, maxTokens: fits });
+    } catch (again) {
+      throw asCreditsError(again, resolved.provider) ?? again;
+    }
+  }
 
   let { content, toolCalls } = res;
   if (call.tools?.length && !native) ({ content, toolCalls } = parseTextToolCalls(content));

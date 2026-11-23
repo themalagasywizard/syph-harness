@@ -18,6 +18,7 @@ import { Home } from "./home.ts";
 import { addUsage, emptyUsage, runAgent, STEER_PREFIX } from "./loop.ts";
 import { connectMcp, type McpConnection } from "./mcp.ts";
 import { complete } from "./providers/llm.ts";
+import { CreditsError, providerName } from "./providers/client.ts";
 import { getProfile, learnContextWindow, listModels, saveProfile } from "./providers/models.ts";
 import { Scheduler } from "./scheduler.ts";
 import { getStrategy } from "./strategies/index.ts";
@@ -732,7 +733,10 @@ export class Harness {
       relay({ type: "run_end", runId: trace.runId, content: result.content, usage, status: "ok", stopReason: result.stopReason, recap: turn.recap, question: turn.question });
     } catch (e) {
       const cancelled = opts.signal?.aborted;
-      turn.content = cancelled ? "(stopped)" : `Something went wrong: ${(e as Error).message}`;
+      if (!cancelled && e instanceof CreditsError) {
+        turn.failure = { kind: "credits", provider: e.provider, ...(e.affordable !== undefined ? { affordable: e.affordable } : {}) };
+        turn.content = `Your ${providerName(e.provider)} balance has run out, so Syph couldn't reply. Add credits, then try again.`;
+      } else turn.content = cancelled ? "(stopped)" : `Something went wrong: ${(e as Error).message}`;
       chat.history = [...chat.history, { role: "user", content: text }];
       trace.finish({ status: cancelled ? "cancelled" : "error", output: turn.content, ...usage });
       relay({ type: "error", error: turn.content });
@@ -788,7 +792,7 @@ export class Harness {
     try {
       const turn = await this.chatUnattended(chat.id, task.prompt, task.model ?? this.home.config().defaults.taskModel);
       runId = turn.runId;
-      if (turn.content.startsWith("Something went wrong")) status = "error";
+      if (turn.failure || turn.content.startsWith("Something went wrong")) status = "error";
     } catch {
       status = "error";
     }

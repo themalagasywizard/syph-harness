@@ -29,6 +29,8 @@ export interface Turn {
   attachments?: Attachment[];
   usage?: Usage;
   review?: { status: "running" | "proposed" | "none"; mistakes: number; proposalId?: string; title?: string; note?: string };
+  /** The run failed for a reason with its own card (the provider ran out of credit). */
+  failure?: { kind: "credits"; provider: string; affordable?: number };
   createdAt: string;
 }
 
