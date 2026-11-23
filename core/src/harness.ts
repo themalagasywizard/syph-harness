@@ -780,6 +780,9 @@ export class Harness {
     this.broadcast({ type: "task", task: store.patchTask(this.home, taskId, { lastStatus: "running" }) });
     // Every run of a task shares one progress file, so the next run resumes instead of starting cold.
     const chat = store.createChat(this.home, { projectId: task.projectId, title: `${task.name} · ${new Date().toLocaleString()}`, model: task.model ?? this.home.config().defaults.taskModel, progressKey: `task-${task.id}` });
+    // The tools an earlier run loaded (for example a connector's write tool) are there from the start.
+    const prev = task.lastChatId ? store.getChat(this.home, task.lastChatId) : null;
+    if (prev?.loadedTools?.length) store.saveChat(this.home, { ...chat, loadedTools: prev.loadedTools });
     let status: Task["lastStatus"] = "ok";
     let runId: string | undefined;
     try {

@@ -56,6 +56,11 @@ export const STEER_PREFIX = "[Message from the user while you were working]\n";
 
 /** Tools whose repeated identical calls are expected (they report state, not do work). */
 const REPEATABLE = new Set(["update_plan", "note_progress", "set_contract"]);
+/** Bookkeeping: these record intent but change nothing. A run of steps with only these is a stall. */
+const BOOKKEEPING = new Set(["update_plan", "note_progress", "set_contract"]);
+/** Steps of bookkeeping only before the harness tells the model to act, and before it stops the run. */
+export const IDLE_NUDGE = 3;
+export const IDLE_STOP = 8;
 
 export async function runAgent(run: AgentRun): Promise<AgentResult> {
   const emit = run.emit ?? (() => {});
@@ -88,6 +93,7 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
   const ctx: ToolContext | undefined = run.ctx && { ...run.ctx, hooks: { ...run.ctx.hooks, endTurn: (q) => void (endTurn = { reason: "question", question: q }) } };
   const calls = new Map<string, number>();
   let stuckCount = 0;
+  let idleSteps = 0;
   const failures = new Map<string, number>();
   let finalNudge: string | null = null;
 
@@ -180,6 +186,10 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
     }
 
     let stuck: string | null = null;
+    // A stall: the model only takes notes ("writing now…") and never makes the call. Different
+    // wording each time, so the same-call guard below can't see it.
+    const idle = assistant.tool_calls.every((c) => BOOKKEEPING.has(c.function.name));
+    idleSteps = idle ? idleSteps + 1 : 0;
     for (const call of assistant.tool_calls) {
       const name = call.function.name;
       let result: string, ok: boolean, args: unknown;
@@ -225,6 +235,22 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
       messages.push({ role: "assistant", content: text });
       emit({ type: "token", text });
       return result(text);
+    }
+    if (!stuck && !finalNudge && idleSteps >= IDLE_STOP) {
+      stuck = `${idleSteps} steps in a row only recorded notes or plans without doing the work`;
+      stuckCount = 3; // a stall isn't fixed by another approach: stop
+    } else if (!stuck && !finalNudge && idleSteps > 0 && idleSteps % IDLE_NUDGE === 0) {
+      // Often the tool it means to call isn't loaded. Load any hidden tool it named, then insist.
+      const said = messages.slice(-idleSteps * 3).map((m) => `${m.content ?? ""} ${(m.tool_calls ?? []).map((c) => c.function.arguments).join(" ")}`).join(" ");
+      const named = run.tools && ctx ? run.tools.hidden(ctx).filter((t) => said.includes(t.name)).map((t) => t.name) : [];
+      if (named.length) ctx?.hooks.loadTools?.(named);
+      const avail = new Set((specs() ?? []).map((t) => t.name).concat(named));
+      const missing = [...new Set(said.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter((n) => !avail.has(n) && !BOOKKEEPING.has(n) && /_(write|send|create|update|append|delete|post|put|insert|upload)$|^(write|send|create|update|append)_/.test(n));
+      emit({ type: "note", text: `Syph only wrote notes for ${idleSteps} steps. Asking it to act.` });
+      messages.push({
+        role: "user",
+        content: `[Harness] You have recorded notes for ${idleSteps} steps in a row without doing the work. Stop taking notes. Your next reply must be the real tool call${named.length ? ` (now loaded: ${named.join(", ")})` : ""}.${missing.length ? ` ${missing.join(", ")} is not one of your tools: call find_tools to load it, or use the tool you have that does it.` : ""} If you cannot make the call (no such tool, the data is too big, an error), say so plainly in your reply instead.`,
+      });
     }
     if (stuck && !finalNudge && long && ++stuckCount < 3) {
       // Long tasks don't stop at the first wall: record it and try another way. Three walls stop it.

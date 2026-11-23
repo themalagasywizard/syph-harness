@@ -354,3 +354,39 @@ test("a run with many mistakes is reviewed and a fix is proposed in Evolve", asy
   assert.equal(p.status, "pending");
   assert.match(p.reason, /listing the folder/);
 });
+
+test("a run that only takes notes is told to act, gets the tool it named, and stops if it still stalls", async () => {
+  const { z } = await import("zod");
+  const { defineTool } = await import("../src/tools/types.ts");
+  const { findToolsTool, noteProgressTool } = await import("../src/longtask.ts");
+  let wrote = 0;
+  const write = defineTool({ name: "sheets_write", description: "Write values to a Google Sheet range.", schema: z.object({ range: z.string() }), permission: "auto", run: () => (wrote++, "Wrote 10 rows.") });
+  const reg: ToolRegistry = new ToolRegistry([...builtinTools, noteProgressTool, findToolsTool((ctx) => reg.hidden(ctx)), write], {}, ["sheets_write"]);
+  const home = tempHome();
+  const mkCtx = () => {
+    const ctx = { ...ctxFor(home), loadedTools: new Set<string>() };
+    ctx.hooks.loadTools = (n) => n.forEach((x) => ctx.loadedTools.add(x));
+    ctx.hooks.progress = () => "Noted.";
+    return ctx;
+  };
+  // Stalls until sheets_write is in its tools, then writes.
+  let i = 0;
+  mock("main", (req) => {
+    const has = req.tools?.some((t) => t.function.name === "sheets_write");
+    if (has && !wrote) return reply("", [call("sheets_write", { range: "A2:L11" })]);
+    if (wrote) return reply("Done: wrote 10 rows.");
+    return reply("", [call("note_progress", { decision: `Issuing sheets_write for A2:L11 now (${i++}).` })]);
+  });
+  const ok = await runAgent({ home, model: "mock:main", messages: [{ role: "user", content: "update the sheet" }], tools: reg, ctx: mkCtx() });
+  assert.equal(wrote, 1, "the named hidden tool was loaded and used");
+  assert.equal(ok.content, "Done: wrote 10 rows.");
+  assert.equal(i, 3, "nudged after three note-only steps");
+
+  // A model that never acts is stopped with a clear reason instead of looping forever.
+  let notes = 0;
+  mock("main", (req) => (req.tools?.length ? reply("", [call("note_progress", { decision: `Writing now (${notes++}).` })]) : reply("I could not make the write call.")));
+  const stalled = await runAgent({ home, model: "mock:main", messages: [{ role: "user", content: "update the sheet" }], tools: reg, ctx: mkCtx(), isLong: () => true });
+  assert.equal(stalled.stopReason, "repeated_error");
+  assert.ok(notes <= 9, `stopped after ${notes} notes`);
+  assert.match(stalled.content, /could not/);
+});
