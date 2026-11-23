@@ -12,6 +12,12 @@ import {
   nextRunOf,
   listStrategies,
   listSkills,
+  findSkill,
+  skillInfos,
+  auditSkills,
+  skillProposal,
+  skillFile,
+  SKILL_NAME,
   listCases,
   isHeldOut,
   getProposal,
@@ -218,6 +224,52 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   route("POST", "/api/tasks/:id/run", (_q, _s, p) => {
     h.runTask(p.id).catch(() => {});
     return { ok: true };
+  });
+
+  // ----- Skills: the user edits, switches off and deletes them directly; each change is recorded in Evolve -----
+  const skillOr404 = (name: string) => {
+    const s = findSkill(home, decodeURIComponent(name), { includeInactive: true });
+    if (!s) throw httpError(404, `No skill named "${name}".`);
+    return s;
+  };
+  route("GET", "/api/skills", () => {
+    const infos = skillInfos(home, h.proposals());
+    return { skills: infos, audit: auditSkills(home, infos) };
+  });
+  route("POST", "/api/skills", (_q, _s, _p, body) => {
+    const name = String(body?.name ?? "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!SKILL_NAME.test(name)) throw httpError(400, "Give the skill a name of letters, numbers and dashes.");
+    if (findSkill(home, name, { includeInactive: true }) || home.exists(`skills/${name}/SKILL.md`)) throw httpError(400, `A skill named "${name}" already exists.`);
+    const description = String(body?.description ?? "").trim();
+    if (!description) throw httpError(400, "Say in one line when Syph should use this skill.");
+    return h.userChange({ kind: "skill", title: `Add skill ${name}`, reason: "Written by you on the Skills page.", files: [{ path: `skills/${name}/SKILL.md`, content: skillFile(name, description, String(body?.body ?? "")) }] });
+  });
+  route("PUT", "/api/skills/:name", (_q, _s, p, body) => {
+    const s = skillOr404(p.name);
+    const toggle = typeof body?.active === "boolean" && body.active !== s.active;
+    const edit = typeof body?.description === "string" || typeof body?.body === "string";
+    if (!edit && !toggle) throw httpError(400, "Nothing to change.");
+    const action = edit
+      ? { action: "edit" as const, name: s.name, description: body.description, body: body.body, active: toggle ? body.active : undefined }
+      : { action: body.active ? ("activate" as const) : ("deactivate" as const), name: s.name };
+    try {
+      return h.userChange(skillProposal(home, [action], "Changed by you on the Skills page.", "user"));
+    } catch (e) {
+      throw httpError(400, (e as Error).message);
+    }
+  });
+  route("DELETE", "/api/skills/:name", (_q, _s, p) => {
+    const s = skillOr404(p.name);
+    return h.userChange(skillProposal(home, [{ action: "delete", name: s.name }], "Deleted by you on the Skills page.", "user"));
+  });
+  route("POST", "/api/skills/bulk", (_q, _s, _p, body) => {
+    const actions = Array.isArray(body?.changes) ? body.changes.filter((c: any) => ["activate", "deactivate", "delete"].includes(c?.action) && typeof c?.name === "string") : [];
+    if (!actions.length) throw httpError(400, "Nothing to change.");
+    try {
+      return h.userChange(skillProposal(home, actions, "Tidied by you on the Skills page.", "user"));
+    } catch (e) {
+      throw httpError(400, (e as Error).message);
+    }
   });
 
   // ----- Evolve -----

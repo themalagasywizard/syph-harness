@@ -26,6 +26,9 @@ export const HARNESS_LENS = `Before you write a change, sort the failure with th
 3. Could it tell? Was there anything that would have shown it was wrong? If not: switch the profile's strategy to "verify" (a self-check) or set a "critic" model, or add a skill step that checks the result with a tool (run it, read it back).
 Prefer the change that turns a sentence into a mechanism (a step that checks, a pointer, a profile setting) over adding another "always do X" line. Say which question failed in your diagnosis.`;
 
+/** Keeps skills from piling up: fix the skill that failed instead of adding a contradicting copy. */
+export const SKILL_RULES = `Skills: if an existing skill covers the same job, rewrite THAT file at its existing path (same name) instead of adding a new skill beside it. Two skills that disagree are worse than none. If your new or rewritten skill makes another one redundant, delete the old one in the same change by listing its path with "content": null. A skill with "active: false" in its frontmatter is switched off; leave it alone unless you mean to turn it back on.`;
+
 const PASS = 0.8;
 
 /** Score a proposal: run the suite on the current home (baseline) and on a shadow copy with the change applied. */
@@ -135,7 +138,7 @@ export async function evolveOnce(home: Home, model: string, log: Log = () => {})
       temperature: 0.4,
       jsonMode: true,
       messages: [
-        { role: "system", content: `${home.read("prompts/reflector.md") ?? ""}\n\n${HARNESS_LENS}` },
+        { role: "system", content: `${home.read("prompts/reflector.md") ?? ""}\n\n${HARNESS_LENS}\n\n${SKILL_RULES}` },
         {
           role: "user",
           content: [
@@ -148,7 +151,7 @@ export async function evolveOnce(home: Home, model: string, log: Log = () => {})
         },
       ],
     });
-    const plan = extractJson<{ diagnosis?: string; kind?: ProposalKind; title?: string; reason?: string; files?: { path: string; content: string }[] }>(res.content);
+    const plan = extractJson<{ diagnosis?: string; kind?: ProposalKind; title?: string; reason?: string; files?: { path: string; content: string | null }[] }>(res.content);
     if (!plan?.files?.length) {
       attemptsNotes.push(`Attempt ${attempt}: reply was not valid JSON with files.`);
       continue;

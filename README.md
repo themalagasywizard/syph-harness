@@ -172,7 +172,15 @@ Model profiles are how Syph lifts weaker models: a tuned prompt variant, a strat
 
 ### Extending Syph
 
-- **Skills:** a folder in `~/.syph/skills/` with a `SKILL.md` (frontmatter `name` and `description`). The agent reads a skill when it is relevant.
+- **Skills:** a folder in `~/.syph/skills/` with a `SKILL.md` (frontmatter `name` and `description`). The agent reads a skill when it is relevant. Add `active: false` to the frontmatter to switch one off without deleting it.
+
+### Managing skills
+
+The **Skills** page lists every skill with how often it was used, how many versions it has and who made it. Switch a skill off or on, edit its description and steps, or delete it; each of these is recorded in Evolve as a change you made, so the snackbar's Undo (or Roll back in Evolve) restores it. A "Worth a look" card flags skills that look alike, have gone unused, or are too thin to help.
+
+The agent has the same powers, always through approval in Evolve: `list_skills` shows every skill with usage and likely duplicates, `propose_skill` can rewrite a skill in place or merge others into it (`replaces`), and `propose_skill_changes` edits, switches off, switches on or deletes several skills as one proposal. Ask it to "tidy my skills" (or press **Ask Syph to tidy**) and it reviews them and proposes merges and removals.
+
+Evolve no longer stacks skills: when the reflector writes a new skill that covers the same job as an existing one, the change is redirected to rewrite that skill, and the reflector may delete a skill its fix makes redundant.
 - **Extensions:** a `.ts` file in `~/.syph/extensions/` exporting `(syph) => ({ tools, strategies, test })`. Syph can write these itself; they go through the same proposal and gate, and their `test` must pass.
 - **MCP servers:** add them to `config.json` under `mcpServers` (`[{ "name": "files", "command": "npx", "args": ["-y", "..."] }]`). Their tools appear as `name__tool` and always ask before running.
 

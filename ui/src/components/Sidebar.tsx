@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { Clock, Dna, FolderClosed, Menu, Plug, Plus, Search, Settings, Smartphone, Trash2 } from "lucide-react";
+import { BookOpen, Clock, Dna, FolderClosed, Menu, Plug, Plus, Search, Settings, Smartphone, Trash2 } from "lucide-react";
 import { useApp, type View } from "../App";
 import { api } from "../api";
 import { Mark, Wordmark } from "./Logo";
@@ -86,6 +86,7 @@ export function Sidebar({ view, collapsed, toggle }: { view: View; collapsed: bo
       <nav className="nav">
         {item(view.kind === "projects", () => go({ kind: "projects" }), <FolderClosed size={18} />, "Projects")}
         {item(view.kind === "tasks", () => go({ kind: "tasks" }), <Clock size={18} />, "Tasks")}
+        {item(view.kind === "skills", () => go({ kind: "skills" }), <BookOpen size={18} />, "Skills")}
         {item(view.kind === "evolve", () => go({ kind: "evolve" }), <Dna size={18} />, "Evolve", state?.pendingProposals)}
         {item(view.kind === "connectors", () => go({ kind: "connectors" }), <Plug size={18} />, "Connectors")}
         {pages.map(({ ext, page }) => <span key={`${ext}/${page.id}`}>{item(view.kind === "page" && view.ext === ext && view.id === page.id, () => go({ kind: "page", ext, id: page.id }), <ExtIcon name={page.icon} size={18} />, page.label)}</span>)}

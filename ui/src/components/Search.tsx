@@ -1,7 +1,7 @@
 // Sidebar search: type to find chats (by title and by what was said in them), settings and
 // pages, then press Enter or click to go there. Ctrl+K (Cmd+K on a Mac) jumps to the box.
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Clock, Dna, FolderClosed, MessageSquare, Plug, Search, Settings, SlidersHorizontal, X } from "lucide-react";
+import { BookOpen, Clock, Dna, FolderClosed, MessageSquare, Plug, Search, Settings, SlidersHorizontal, X } from "lucide-react";
 import { useApp, type View } from "../App";
 import { api } from "../api";
 import { SETTINGS_SECTIONS } from "../settingsIndex";
@@ -116,11 +116,15 @@ export function useSearchResults(query: string) {
     const pages: [string, ReactNode, View][] = [
       ["Projects", <FolderClosed size={15} />, { kind: "projects" }],
       ["Tasks", <Clock size={15} />, { kind: "tasks" }],
+      ["Skills", <BookOpen size={15} />, { kind: "skills" }],
       ["Evolve", <Dna size={15} />, { kind: "evolve" }],
       ["Connectors", <Plug size={15} />, { kind: "connectors" }],
       ["Settings", <Settings size={15} />, { kind: "settings" }],
     ];
     for (const [title, icon, view] of pages) if (matches(title, ws)) out.push({ key: `p-${title}`, group: "Go to", icon, title, view });
+    for (const sk of (state?.skills ?? []).filter((sk) => matches(sk.name, ws)).slice(0, 5)) {
+      out.push({ key: `sk-${sk.name}`, group: "Go to", icon: <BookOpen size={15} />, title: sk.name, sub: "Skill", view: { kind: "skills", name: sk.name } });
+    }
     for (const p of state?.projects ?? []) {
       if (matches(p.name, ws)) out.push({ key: `pr-${p.id}`, group: "Go to", icon: <span className="dot" style={{ background: p.color }} />, title: p.name, sub: "Project", view: { kind: "projects", projectId: p.id } });
     }

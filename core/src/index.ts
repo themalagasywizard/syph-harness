@@ -12,7 +12,7 @@ export { listStrategies, registerStrategy } from "./strategies/index.ts";
 export { listCases, runSuite, isHeldOut, caseFromRun } from "./evals/index.ts";
 export { evolveOnce, gate } from "./evolve/engine.ts";
 export { createProposal, listProposals, getProposal } from "./evolve/proposals.ts";
-export { listSkills } from "./skills.ts";
+export { listSkills, listAllSkills, findSkill, skillInfos, auditSkills, skillProposal, skillFile, serializeSkill, parseSkill, skillSimilarity, SKILL_NAME, type SkillInfo, type SkillAudit, type SkillAction } from "./skills.ts";
 export { listRuns, readTrace } from "./trace.ts";
 export { runAgent } from "./loop.ts";
 export { ToolRegistry } from "./tools/registry.ts";

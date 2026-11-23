@@ -10,7 +10,7 @@ import { connectorAgentTools, connectorPrompt } from "./connectors/agent-tools.t
 import { buildSystemPrompt, compactHistory, elideToolResult } from "./context.ts";
 import { caseFromRun, evalHistory, listCases, runSuite } from "./evals/index.ts";
 import { evolveOnce, gate } from "./evolve/engine.ts";
-import { acceptProposal, createProposal, getProposal, listProposals, rejectProposal, rollbackProposal, save } from "./evolve/proposals.ts";
+import { acceptProposal, commitUserChange, createProposal, getProposal, listProposals, rejectProposal, rollbackProposal, save, type ProposalInput } from "./evolve/proposals.ts";
 import { addExample } from "./examples.ts";
 import { exportDatasets } from "./export.ts";
 import { loadExtensions, type ExtensionReport } from "./extensions.ts";
@@ -94,9 +94,9 @@ interface LiveRun {
 }
 
 /** Tools that never write files, so there is nothing to look for after them. */
-const READ_ONLY_TOOLS = new Set(["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_connectors", "list_ui", "propose_ui_change", "propose_skill", "propose_memory", "create_task", "create_connector", "update_plan", "list_repos", "github_repos", "github_api", "github_pr_create"]);
+const READ_ONLY_TOOLS = new Set(["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_skills", "propose_skill_changes", "list_connectors", "list_ui", "propose_ui_change", "propose_skill", "propose_memory", "create_task", "create_connector", "update_plan", "list_repos", "github_repos", "github_api", "github_pr_create"]);
 /** What the agent may use while it drafts a contract in long-task mode: look around, write nothing. */
-const DRAFT_TOOLS = ["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_repos", "github_repos", "list_connectors", "set_contract", "ask_user", "update_plan", "note_progress"];
+const DRAFT_TOOLS = ["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_skills", "list_repos", "github_repos", "list_connectors", "set_contract", "ask_user", "update_plan", "note_progress"];
 const DRAFT_PROMPT = `# Long-task mode: draft the contract first
 The user switched on long-task mode. Before any work: look around as much as you need (read-only), then call set_contract with the goal, the scope, the paths never to touch, and done_when checks with commands that prove the work is done. Then stop and tell the user, in two or three lines, that the contract is ready for them to review, edit and approve. Don't change any file yet: that starts once they approve.`;
 
@@ -883,6 +883,13 @@ export class Harness {
 
   uiChanged() {
     this.broadcast({ type: "ui" });
+  }
+
+  /** A change the user made by hand (Skills page): applied now, recorded in Evolve so it can be undone. */
+  userChange(input: Omit<ProposalInput, "source">) {
+    const p = commitUserChange(this.home, input);
+    this.broadcast({ type: "proposal", id: p.id });
+    return p;
   }
 
   // ---------- Interface actions: run on the server from an approved extension, never from the page's own input ----------
