@@ -75,7 +75,7 @@ export function providerName(provider: string) {
   return provider === "openrouter" ? "OpenRouter" : provider === "minimax" ? "MiniMax" : provider;
 }
 
-const CREDIT_TEXT = /requires more credits|can only afford|insufficient (account )?(balance|credits?|funds|quota)|out of credits|balance (is )?(not enough|insufficient)|exceeded your current quota|payment required/i;
+const CREDIT_TEXT = /requires more credits|can only afford|insufficient (account )?(balance|credits?|funds|quota)|out of credits|balance (is )?(not enough|insufficient)|exceeded your current quota|payment required|usage limit (exceeded|reached)|plan limit/i;
 
 /** Turn a provider failure into a CreditsError when it is one, so the chat can say so plainly. */
 export function asCreditsError(e: unknown, provider: string): CreditsError | null {
@@ -83,7 +83,7 @@ export function asCreditsError(e: unknown, provider: string): CreditsError | nul
   if (!(e instanceof ProviderError)) return null;
   const text = e.message;
   // MiniMax reports a low balance as status 1008 in base_resp.
-  if (e.status !== 402 && !CREDIT_TEXT.test(text) && !/"status_code"\s*:\s*1008\b/.test(text)) return null;
+  if (e.status !== 402 && !CREDIT_TEXT.test(text) && !/status_code"?\s*:?\s*(1008|2056)\b/.test(text)) return null;
   const num = (re: RegExp) => {
     const m = re.exec(text);
     return m ? Number(m[1]) : undefined;

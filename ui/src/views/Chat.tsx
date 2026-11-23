@@ -4,6 +4,7 @@ import { Markdown } from "../components/Markdown";
 import { Mark } from "../components/Logo";
 import { CellLoader } from "../components/CellLoader";
 import { ModelPicker } from "../components/ModelPicker";
+import { UsageBar } from "../components/UsageBar";
 import { useApp } from "../App";
 import { api, followChat, modelLabel, queueMessage, sendMessage, uploadAttachment, type AgentEvent, type Attachment, type Chat, type CheckResult, type FileRef, type PlanStep, type Progress, type Proposal, type RunStatus, type ToolCallView, type Turn } from "../api";
 import { ContractCard, CreditsCard, EditDiff, QuestionCard, RecapLine, StatusLine, StopCard } from "../components/RunCards";
@@ -329,6 +330,8 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const [live, setLive] = useState<Turn | null>(null);
   /** When a reply has just finished, its logo springs back into shape instead of appearing still. */
   const [settling, setSettling] = useState(false);
+  /** Bumped when a reply ends, so the usage bar re-reads what is left. */
+  const [usageBump, setUsageBump] = useState(0);
   useEffect(() => {
     if (!settling) return;
     const id = setTimeout(() => setSettling(false), 2500);
@@ -463,6 +466,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
       setProgress(fresh.progress);
     }
     setLive(null);
+    setUsageBump((n) => n + 1);
     setSettling(wrote);
     setStatus(undefined);
     setQueued([]);
@@ -790,6 +794,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             <RepoComposerMenu chatId={cid} projectId={projectId} ensureChat={ensureChat} iconOnly />
             <Slot name="chat.composer" ctx={slotCtx} />
             <div className="spacer" />
+            <UsageBar model={model ?? state?.config.defaults.chatModel} bump={usageBump} />
             <ModelPicker value={model} onChange={setModel} effort />
             {live && draft.trim() && <button className="send ready" onClick={() => send()} aria-label="Send to the running task" title="Syph reads it at its next step"><CornerDownRight size={18} /></button>}
             {live ? (

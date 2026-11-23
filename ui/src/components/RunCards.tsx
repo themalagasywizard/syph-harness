@@ -3,6 +3,7 @@
 // what actually happened (recap). Everything shown here comes from the harness, not the model.
 import { useEffect, useState } from "react";
 import { AlertTriangle, CircleCheck, CreditCard, ExternalLink, RotateCcw, CircleDashed, CircleX, FileDiff, Flag, HelpCircle, Loader2, PauseCircle, Pencil, Play, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { resetsIn, useUsage } from "./UsageBar";
 import { api, type CheckResult, type Contract, type Progress, type Recap, type RunStatus, type StopReason, type Turn } from "../api";
 
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n));
@@ -178,6 +179,26 @@ const BILLING: Record<string, { name: string; href: string }> = {
 export function CreditsCard({ failure, onRetry, disabled }: { failure: NonNullable<Turn["failure"]>; onRetry?: () => void; disabled?: boolean }) {
   const billing = BILLING[failure.provider];
   const name = billing?.name ?? failure.provider;
+  // A MiniMax plan that hit its window limit comes back on its own: say when, rather than "add credits".
+  const { usage } = useUsage(failure.provider === "minimax" ? "minimax" : undefined);
+  const spent = usage?.meters.filter((m) => m.total > 0 && m.used >= m.total).sort((a, b) => (b.resetsAt ?? 0) - (a.resetsAt ?? 0))[0];
+  if (spent) {
+    return (
+      <div className="credits-card">
+        <div className="cc-icon"><CreditCard size={18} /></div>
+        <div className="cc-text">
+          <b>You've reached your MiniMax plan limit</b>
+          <span className="hint">
+            The {spent.label.toLowerCase()} is used up{spent.resetsAt ? ` and resets ${resetsIn(spent.resetsAt)}` : ""}. Try again then, or add credits to keep going now. Your message is kept.
+          </span>
+          <div className="cc-actions">
+            {billing && <a className="btn primary sm" href={billing.href} target="_blank" rel="noreferrer"><ExternalLink size={13} /> Add credits</a>}
+            {onRetry && <button className="btn tonal sm" disabled={disabled} onClick={onRetry}><RotateCcw size={13} /> Try again</button>}
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="credits-card">
       <div className="cc-icon"><CreditCard size={18} /></div>
