@@ -88,6 +88,7 @@ export async function complete(home: Home, call: LlmCall): Promise<LlmResult> {
     temperature: call.temperature ?? profile.temperature,
     maxTokens: call.maxTokens,
     jsonMode: call.jsonMode,
+    provider: resolved.provider,
     cache: resolved.provider === "openrouter" && /^(anthropic|google)\//.test(resolved.model),
     signal: call.signal,
     onToken: native || !call.tools?.length ? call.onToken : textToolStreamFilter(call.onToken),

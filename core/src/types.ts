@@ -17,6 +17,8 @@ export interface ChatMessage {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
+  /** The model's thinking, for providers that need it sent back with its tool calls (MiniMax). */
+  reasoning_content?: string;
 }
 
 export interface Usage {

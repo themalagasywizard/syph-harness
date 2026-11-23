@@ -33,6 +33,16 @@ export function resolveModel(ref: string, home: Home): ResolvedModel {
   return { ref: `${provider}:${model}`, provider, model, baseUrl: p.baseUrl, apiKey };
 }
 
+/**
+ * MiniMax's text models (platform.minimax.io/docs/guides/text-generation). Its /models list has no
+ * context sizes, so they are kept here; the list also stands in when /models can't be reached.
+ */
+export const MINIMAX_MODELS = [
+  { id: "MiniMax-M3.1-Flash", label: "MiniMax M3.1 Flash", contextWindow: 1_000_000 },
+  { id: "MiniMax-M3", label: "MiniMax M3", contextWindow: 1_000_000 },
+];
+export const MINIMAX_DEFAULT = "minimax:MiniMax-M3.1-Flash";
+
 const fileFor = (ref: string) => `profiles/${ref.replace(/[^\w.-]+/g, "_")}.json`;
 
 // Context windows the providers report, by model reference. Syph uses the whole window of the model
@@ -61,7 +71,7 @@ export function getProfile(home: Home, ref: string): ModelProfile {
   };
   const p = { ...guess, ...base, ...stored, id: ref } as ModelProfile;
   // The model's full window wins over a default or a stale saved number, unless the user chose a limit.
-  const known = knownContextWindow(home, ref);
+  const known = knownContextWindow(home, ref) ?? MINIMAX_MODELS.find((m) => `minimax:${m.id}` === ref)?.contextWindow;
   if (known && !p.contextWindowSet) p.contextWindow = known;
   return p;
 }
@@ -132,12 +142,21 @@ export async function listModels(home: Home): Promise<ModelInfo[]> {
     config.providers.map(async (p) => {
       try {
         const apiKey = p.apiKeyEnv ? home.env(p.apiKeyEnv) : undefined;
+        const minimax = p.name === "minimax";
+        if (minimax && !apiKey) return; // nothing to offer until a key is saved
         const res = await fetch(p.baseUrl.replace(/\/$/, "") + "/models", {
           headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
           signal: AbortSignal.timeout(4000),
-        });
-        if (!res.ok) return;
-        const json: any = await res.json();
+        }).catch(() => null);
+        const json: any = res?.ok ? await res.json().catch(() => ({})) : {};
+        if (minimax) {
+          // Known models first, with their windows; then anything else the account lists.
+          const listed = new Set<string>((json.data ?? []).map((m: any) => m.id));
+          for (const m of MINIMAX_MODELS) out.push({ ref: `minimax:${m.id}`, label: m.label, provider: p.name, contextWindow: m.contextWindow, tools: true });
+          for (const id of listed) if (!MINIMAX_MODELS.some((m) => m.id === id)) out.push({ ref: `minimax:${id}`, label: id, provider: p.name });
+          return;
+        }
+        if (!res?.ok) return;
         for (const m of json.data ?? []) {
           out.push({
             ref: `${p.name}:${m.id}`,

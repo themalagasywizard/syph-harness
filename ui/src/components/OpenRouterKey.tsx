@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Check, Eye, EyeOff, RefreshCw, Trash2 } from "lucide-react";
 import { api } from "../api";
 import { resetModels } from "./ModelPicker";
@@ -34,8 +34,39 @@ function CheckLine({ check }: { check?: KeyCheck }) {
   );
 }
 
+interface KeyProvider {
+  id: "openrouter" | "minimax";
+  placeholder: string;
+  link: { href: string; text: string };
+  hint: ReactNode;
+}
+
+const OPENROUTER: KeyProvider = {
+  id: "openrouter",
+  placeholder: "sk-or-v1-…",
+  link: { href: "https://openrouter.ai/keys", text: "openrouter.ai/keys" },
+  hint: ". Syph checks it with OpenRouter, then saves it to the .env in your Syph data folder, where its own file tools can't read it.",
+};
+
+const MINIMAX: KeyProvider = {
+  id: "minimax",
+  placeholder: "Your MiniMax API key",
+  link: { href: "https://platform.minimax.io/console/plan", text: "platform.minimax.io" },
+  hint: ": the key on your subscription's plan page, or a pay-as-you-go API key. Syph checks it with MiniMax, saves it to the .env in your Syph data folder, and the first time makes MiniMax M3.1 Flash your chat and tasks model.",
+};
+
 /** Add, check, replace or remove the OpenRouter key. The server only ever returns a masked form of it. */
 export function OpenRouterKey({ onChange }: { onChange: () => void }) {
+  return <ProviderKey provider={OPENROUTER} onChange={onChange} />;
+}
+
+/** The same for the MiniMax key (pay-as-you-go or the subscription's key). */
+export function MiniMaxKey({ onChange }: { onChange: () => void }) {
+  return <ProviderKey provider={MINIMAX} onChange={onChange} />;
+}
+
+function ProviderKey({ provider, onChange }: { provider: KeyProvider; onChange: () => void }) {
+  const path = `/keys/${provider.id}`;
   const [status, setStatus] = useState<KeyStatus | null>(null);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
@@ -44,11 +75,11 @@ export function OpenRouterKey({ onChange }: { onChange: () => void }) {
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    api.get<KeyStatus>("/keys/openrouter").then((s) => {
+    api.get<KeyStatus>(path).then((s) => {
       setStatus(s);
       setEditing(!s.set);
     });
-  }, []);
+  }, [path]);
 
   const run = async (kind: "save" | "check" | "remove", fn: () => Promise<KeyStatus>) => {
     setBusy(kind);
@@ -69,26 +100,26 @@ export function OpenRouterKey({ onChange }: { onChange: () => void }) {
     setBusy(null);
   };
 
-  const save = () => run("save", () => api.put<KeyStatus>("/keys/openrouter", { key: value }));
+  const save = () => run("save", () => api.put<KeyStatus>(path, { key: value }));
   if (!status) return null;
 
   return (
     <div className="field" style={{ marginTop: 14, marginBottom: 0 }}>
-      <label htmlFor="openrouter-key">API key</label>
+      <label htmlFor={`${provider.id}-key`}>API key</label>
       {status.set && !editing ? (
         <>
           <div className="key-row">
             <code className="key-masked">{status.masked}</code>
             <span className="hint">{status.source === "environment" ? "From the .env next to Syph or the environment" : "Saved in Settings"}</span>
             <div className="spacer" />
-            <button className="btn ghost sm" disabled={!!busy} onClick={() => run("check", () => api.post<KeyStatus>("/keys/openrouter/check"))}>
+            <button className="btn ghost sm" disabled={!!busy} onClick={() => run("check", () => api.post<KeyStatus>(`${path}/check`))}>
               <RefreshCw size={14} className={busy === "check" ? "spin" : ""} /> Check
             </button>
             <button className="btn ghost sm" disabled={!!busy} onClick={() => setEditing(true)}>
               Replace
             </button>
             {status.source === "settings" && (
-              <button className="btn ghost sm danger" disabled={!!busy} onClick={() => run("remove", () => api.del<KeyStatus>("/keys/openrouter"))}>
+              <button className="btn ghost sm danger" disabled={!!busy} onClick={() => run("remove", () => api.del<KeyStatus>(path))}>
                 <Trash2 size={14} /> Remove
               </button>
             )}
@@ -105,7 +136,7 @@ export function OpenRouterKey({ onChange }: { onChange: () => void }) {
             }}
           >
             <div className="key-input">
-              <input id="openrouter-key" className="input" type={show ? "text" : "password"} autoComplete="off" spellCheck={false} placeholder="sk-or-v1-…" value={value} onChange={(e) => setValue(e.target.value)} />
+              <input id={`${provider.id}-key`} className="input" type={show ? "text" : "password"} autoComplete="off" spellCheck={false} placeholder={provider.placeholder} value={value} onChange={(e) => setValue(e.target.value)} />
               <button type="button" className="key-eye" aria-label={show ? "Hide key" : "Show key"} onClick={() => setShow(!show)}>
                 {show ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
@@ -129,10 +160,10 @@ export function OpenRouterKey({ onChange }: { onChange: () => void }) {
           </form>
           <span className="hint">
             Get one at{" "}
-            <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer">
-              openrouter.ai/keys
+            <a href={provider.link.href} target="_blank" rel="noreferrer">
+              {provider.link.text}
             </a>
-            . Syph checks it with OpenRouter, then saves it to the .env in your Syph data folder, where its own file tools can't read it.
+            {provider.hint}
           </span>
         </>
       )}

@@ -78,14 +78,19 @@ export class Home {
       writeText(this.path(".syph-version"), "1\n");
     }
     for (const d of ["traces", "proposals", "history", "chats", "projects", "workspace", "examples", "evals/cases", "evals/results", "extensions", "profiles"]) ensureDir(this.path(d));
-    if (!existsSync(this.path(".env"))) writeText(this.path(".env"), "# OPENROUTER_API_KEY=sk-or-...\n");
+    if (!existsSync(this.path(".env"))) writeText(this.path(".env"), "# OPENROUTER_API_KEY=sk-or-...\n# MINIMAX_API_KEY=...\n");
     return this;
   }
 
   config(): SyphConfig {
     const defaults = readJson<SyphConfig>(join(DEFAULTS_DIR, "config.json"), {} as SyphConfig);
     const user = readJson<Partial<SyphConfig>>(this.path("config.json"), {});
-    return deepMerge(defaults, user) as SyphConfig;
+    const merged = deepMerge(defaults, user) as SyphConfig;
+    // A saved provider list (e.g. after editing a base URL) must not hide providers added since.
+    if (Array.isArray(user.providers)) {
+      for (const p of defaults.providers ?? []) if (!merged.providers.some((x) => x.name === p.name)) merged.providers.push(p);
+    }
+    return merged;
   }
 
   saveConfig(patch: Partial<SyphConfig>) {

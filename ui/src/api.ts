@@ -274,6 +274,7 @@ export interface Config {
   evolve: { samplesPerCase: number; maxAttempts: number; heldOutFraction: number };
   killSwitch: boolean;
   hasOpenRouterKey: boolean;
+  hasMiniMaxKey?: boolean;
 }
 
 export interface AppState {
@@ -381,6 +382,7 @@ export const modelLabel = (ref?: string) => {
   const i = ref.indexOf(":");
   const provider = i > 0 ? ref.slice(0, i) : "openrouter";
   const model = i > 0 ? ref.slice(i + 1) : ref;
+  if (provider === "minimax") return model.replace(/^MiniMax-/, "MiniMax ").replace(/-/g, " ");
   if (provider !== "openrouter") return `${model} · ${provider}`;
   const name = model.split("/").pop()!;
   return name.replace(/^deepseek-/, "DeepSeek ").replace(/-/g, " ").replace(/\b(\w)/g, (c) => c.toUpperCase());

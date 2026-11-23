@@ -166,7 +166,11 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
     emit({ type: "status", step, contextTokens: res.promptTokens || historyTokens(messages), contextWindow: window, usage: { ...usage }, cachedTokens: res.cachedTokens ?? 0 });
 
     const assistant: ChatMessage = { role: "assistant", content: res.content || null };
-    if (res.toolCalls.length && !lastStep) assistant.tool_calls = res.toolCalls;
+    if (res.toolCalls.length && !lastStep) {
+      assistant.tool_calls = res.toolCalls;
+      // MiniMax needs its thinking sent back with the calls; other providers never see it.
+      if (res.reasoning) assistant.reasoning_content = res.reasoning;
+    }
     messages.push(assistant);
     emit({ type: "message", message: assistant });
 

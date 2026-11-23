@@ -29,6 +29,7 @@ import {
   UI_SLOTS,
   snapshot,
   type AgentEvent,
+  MINIMAX_DEFAULT,
 } from "@syph/core";
 
 type Handler = (req: IncomingMessage, res: ServerResponse, params: Record<string, string>, body: any) => unknown | Promise<unknown>;
@@ -49,7 +50,7 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   route("GET", "/api/state", () => {
     const cfg = home.config();
     return {
-      config: { ...cfg, hasOpenRouterKey: !!home.env("OPENROUTER_API_KEY") },
+      config: { ...cfg, hasOpenRouterKey: !!home.env("OPENROUTER_API_KEY"), hasMiniMaxKey: !!home.env("MINIMAX_API_KEY") },
       projects: store.listProjects(home).map((p) => ({ ...p, folder: store.workspaceFor(home, p.id), chatCount: store.listChats(home).filter((c) => c.projectId === p.id).length, taskCount: store.listTasks(home).filter((t) => t.projectId === p.id).length })),
       chats: (() => {
         const live = h.liveChats();
@@ -100,6 +101,37 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   route("DELETE", "/api/keys/openrouter", () => {
     home.setEnv(KEY, null);
     return keyStatus();
+  });
+
+  // ----- MiniMax key (a pay-as-you-go key or the one that comes with a MiniMax subscription) -----
+  const MM = "MINIMAX_API_KEY";
+  const mmStatus = () => {
+    const k = home.env(MM);
+    return { set: !!k, source: home.envSource(MM), masked: k ? maskKey(k) : null };
+  };
+  const mmBase = () => home.config().providers.find((p) => p.name === "minimax")?.baseUrl ?? "https://api.minimax.io/v1";
+  route("GET", "/api/keys/minimax", () => mmStatus());
+  route("PUT", "/api/keys/minimax", async (_q, _s, _p, body) => {
+    const key = cleanMiniMaxKey(String(body?.key ?? ""));
+    const check = await checkMiniMaxKey(key, mmBase());
+    if (check.rejected) throw httpError(400, check.error!);
+    const first = !home.env(MM);
+    home.setEnv(MM, key);
+    // First key: make MiniMax's latest model the default for chats and tasks, as the key was added to use it.
+    if (first && body?.makeDefault !== false) {
+      const d = home.config().defaults;
+      home.saveConfig({ defaults: { ...d, chatModel: MINIMAX_DEFAULT, taskModel: MINIMAX_DEFAULT } });
+    }
+    return { ...mmStatus(), check };
+  });
+  route("POST", "/api/keys/minimax/check", async () => {
+    const k = home.env(MM);
+    if (!k) throw httpError(400, "No MiniMax key saved yet.");
+    return { ...mmStatus(), check: await checkMiniMaxKey(k, mmBase()) };
+  });
+  route("DELETE", "/api/keys/minimax", () => {
+    home.setEnv(MM, null);
+    return mmStatus();
   });
 
   route("GET", "/api/profiles/:ref", (_q, _s, p) => h.profileFresh(decodeURIComponent(p.ref)));
@@ -455,6 +487,37 @@ function serveStatic(dir: string, pathname: string, res: ServerResponse) {
   }
   res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
   res.end(readFileSync(file));
+}
+
+// ----- MiniMax key helpers -----
+
+/** Accept a pasted MiniMax key with stray quotes, spaces or a leading MINIMAX_API_KEY=. */
+export function cleanMiniMaxKey(raw: string) {
+  const key = raw.trim().replace(/^(?:export\s+)?MINIMAX_API_KEY\s*=\s*/, "").replace(/^(?:Bearer\s+)/i, "").replace(/^["']|["']$/g, "").trim();
+  if (!key) throw httpError(400, "Paste your MiniMax key first.");
+  if (!/^[\x21-\x7e]+$/.test(key)) throw httpError(400, "That key has spaces or line breaks in it. Copy it again from platform.minimax.io.");
+  if (key.length < 20) throw httpError(400, "That looks too short for a MiniMax key. Copy all of it from platform.minimax.io.");
+  return key;
+}
+
+/** Ask MiniMax's /models with the key. A 401/403 means the key is wrong; anything else is not the key's fault. */
+export async function checkMiniMaxKey(key: string, base = process.env.SYPH_MINIMAX_URL ?? "https://api.minimax.io/v1"): Promise<KeyCheck> {
+  try {
+    const res = await fetch(`${base.replace(/\/$/, "")}/models`, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000) });
+    if (res.status === 401 || res.status === 403) return { ok: false, rejected: true, error: "MiniMax rejected this key. Check you copied all of it from platform.minimax.io (Subscription or API Keys)." };
+    if (!res.ok) return { ok: false, error: `MiniMax answered ${res.status}. Try Check again later.` };
+    const d: any = await res.json().catch(() => ({}));
+    // MiniMax can answer 200 with an error code in base_resp (1004 and 2049 are bad keys).
+    const code = d?.base_resp?.status_code;
+    if (code && code !== 0) {
+      if (code === 1004 || code === 2049 || /auth|key/i.test(d.base_resp.status_msg ?? "")) return { ok: false, rejected: true, error: "MiniMax rejected this key. Check you copied all of it from platform.minimax.io (Subscription or API Keys)." };
+      return { ok: false, error: `MiniMax said: ${d.base_resp.status_msg ?? code}. Try Check again later.` };
+    }
+    const ids: string[] = (d?.data ?? []).map((m: any) => m.id);
+    return { ok: true, label: ids.length ? `${ids.length} model${ids.length === 1 ? "" : "s"} available` : undefined };
+  } catch {
+    return { ok: false, error: "Couldn't reach MiniMax to check the key. Check your connection." };
+  }
 }
 
 // ----- OpenRouter key helpers -----

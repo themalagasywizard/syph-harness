@@ -5,7 +5,7 @@ import { Mark } from "../components/Logo";
 import { CellLoader } from "../components/CellLoader";
 import { ModelPicker } from "../components/ModelPicker";
 import { useApp } from "../App";
-import { api, followChat, queueMessage, sendMessage, uploadAttachment, type AgentEvent, type Attachment, type Chat, type CheckResult, type FileRef, type PlanStep, type Progress, type Proposal, type RunStatus, type ToolCallView, type Turn } from "../api";
+import { api, followChat, modelLabel, queueMessage, sendMessage, uploadAttachment, type AgentEvent, type Attachment, type Chat, type CheckResult, type FileRef, type PlanStep, type Progress, type Proposal, type RunStatus, type ToolCallView, type Turn } from "../api";
 import { ContractCard, EditDiff, QuestionCard, RecapLine, StatusLine, StopCard } from "../components/RunCards";
 import { ActiveRepoChip, RepoComposerMenu, useOutside } from "../components/Repos";
 import { FileCard, FileIcon } from "../components/FilePreview";
@@ -606,6 +606,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const slotCtx = { projectId, chatId: cid, send: (t: string) => (live ? setDraft(t) : send(t)), setDraft: (t: string) => { setDraft(t); textarea.current?.focus(); } };
   const empty = !turns.length && !live;
   const noKey = state && !state.config.hasOpenRouterKey && (model ?? "").startsWith("openrouter:");
+  const noMiniMaxKey = state && !state.config.hasMiniMaxKey && (model ?? "").startsWith("minimax:");
 
   return (
     <>
@@ -711,6 +712,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
       <div className="composer-wrap">
         {error && <div className="banner bad">{error}</div>}
         {noKey && <div className="banner">Add your OpenRouter key in <a href="#/settings">Settings</a> to chat with {model?.replace("openrouter:", "")}.</div>}
+        {noMiniMaxKey && <div className="banner">Add your MiniMax key in <a href="#/settings">Settings</a> to chat with {modelLabel(model)}.</div>}
         <div
           className={`composer ${dragging ? "dragging" : ""}`}
           onDragOver={(e) => {

@@ -9,7 +9,7 @@ export const resetModels = () => {
   cache = null;
 };
 
-const PROVIDER_LABEL: Record<string, string> = { openrouter: "OpenRouter", ollama: "Local · Ollama", lmstudio: "Local · LM Studio" };
+const PROVIDER_LABEL: Record<string, string> = { openrouter: "OpenRouter", minimax: "MiniMax", ollama: "Local · Ollama", lmstudio: "Local · LM Studio" };
 
 /** Searchable model menu. Shows defaults first, then DeepSeek and local models, then search hits. */
 export function ModelPicker({ value, onChange, align = "right", compact = true, up = true }: { value?: string; onChange: (ref: string) => void; align?: "left" | "right"; compact?: boolean; up?: boolean }) {

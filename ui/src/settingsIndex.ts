@@ -12,7 +12,7 @@ export interface SettingsSection {
 }
 
 export const SETTINGS_SECTIONS: SettingsSection[] = [
-  { id: "providers", group: "Models", title: "Model providers", items: ["OpenRouter key", "Ollama base URL", "OpenAI-compatible base URL"], keywords: "api key lm studio llama local endpoint" },
+  { id: "providers", group: "Models", title: "Model providers", items: ["OpenRouter key", "MiniMax key", "Ollama base URL", "OpenAI-compatible base URL"], keywords: "api key minimax m3.1 flash subscription coding plan lm studio llama local endpoint" },
   { id: "defaults", group: "Models", title: "Default models", items: ["Chat model", "Tasks model", "Reflector model", "Judge model"], keywords: "default model" },
   { id: "profile", group: "Models", title: "Model profile", items: ["Strategy", "Escalate to", "Few-shot examples", "Context window", "Native tool calling"], keywords: "cascade tokens tools" },
   { id: "approvals", group: "Running", title: "Tool approvals", items: ["YOLO mode", "YOLO for scheduled Tasks"], keywords: "permissions ask first powershell shell" },
