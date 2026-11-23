@@ -26,7 +26,8 @@ export function corePromptPath(home: Home, profile: ModelProfile) {
 
 export function buildSystemPrompt(home: Home, input: ContextInput): string {
   const profile = getProfile(home, input.model);
-  const budget = Math.max(2000, Math.floor(profile.contextWindow * 0.25));
+  // A quarter of the window, but never more than 40k tokens: a 1M-token model shouldn't pay for a huge prompt every step.
+  const budget = Math.min(40_000, Math.max(2000, Math.floor(profile.contextWindow * 0.25)));
   // Stable parts first, so providers that cache prompt prefixes can reuse them turn after turn.
   // Anything that changes per request (examples, the date, progress) goes at the end.
   const parts: string[] = [];

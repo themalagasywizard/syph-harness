@@ -86,6 +86,8 @@ export interface ModelProfile {
   /** Model reference, "provider:model", e.g. "openrouter:deepseek/deepseek-v4-pro" or "ollama:qwen3:14b". */
   id: string;
   contextWindow: number;
+  /** True when the user chose this window in Settings; otherwise the model's full window is used. */
+  contextWindowSet?: boolean;
   /** Whether the endpoint supports native OpenAI tool calling. When false, a text protocol is used. */
   nativeTools: boolean;
   temperature?: number;

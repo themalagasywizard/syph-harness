@@ -257,6 +257,7 @@ export interface ModelInfo {
 export interface Profile {
   id: string;
   contextWindow: number;
+  contextWindowSet?: boolean;
   nativeTools: boolean;
   strategy: string;
   fewShot: number;

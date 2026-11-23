@@ -290,3 +290,28 @@ test("YOLO mode runs ask-first tools without asking, and frees a waiting one", a
   assert.equal((await h.chat(c2.id, "run it", { emit: (e) => ev2.push(e.type) })).content, "ran");
   assert.ok(!ev2.includes("approval_request"));
 });
+
+test("each model uses its full context window unless the user set a limit", async () => {
+  const { createServer } = await import("node:http");
+  const { getProfile, learnContextWindow, saveProfile } = await import("../src/providers/models.ts");
+  const srv = createServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ data: [{ id: "big/model", context_length: 1_000_000 }, { id: "small/model", context_length: 32_768 }] }));
+  });
+  await new Promise<void>((r) => srv.listen(0, r));
+  const port = (srv.address() as any).port;
+  const home = tempHome({ providers: [{ name: "remote", baseUrl: `http://127.0.0.1:${port}/v1` }] });
+  try {
+    assert.notEqual(getProfile(home, "remote:big/model").contextWindow, 1_000_000, "a default before the provider is asked");
+    assert.equal(await learnContextWindow(home, "remote:big/model"), 1_000_000);
+    assert.equal(getProfile(home, "remote:big/model").contextWindow, 1_000_000);
+    assert.equal(getProfile(home, "remote:small/model").contextWindow, 32_768, "one lookup learns every model the provider lists");
+    // A stale saved number doesn't shrink the window; a limit the user chose does.
+    saveProfile(home, { ...getProfile(home, "remote:big/model"), contextWindow: 128000 });
+    assert.equal(getProfile(home, "remote:big/model").contextWindow, 1_000_000);
+    saveProfile(home, { ...getProfile(home, "remote:big/model"), contextWindow: 200_000, contextWindowSet: true });
+    assert.equal(getProfile(home, "remote:big/model").contextWindow, 200_000);
+  } finally {
+    srv.close();
+  }
+});

@@ -334,7 +334,6 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const [liveChecks, setLiveChecks] = useState<CheckResult[]>();
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(0);
-  const [longMode, setLongMode] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [mention, setMention] = useState<{ kind: "/" | "@"; query: string; start: number } | null>(null);
   const [wsFiles, setWsFiles] = useState<string[]>([]);
@@ -478,8 +477,6 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
     setError(undefined);
     setDraft("");
     setAttachments([]);
-    const mode = longMode ? ("long" as const) : undefined;
-    setLongMode(false);
     let id = cid;
     try {
       const fresh = !id;
@@ -491,7 +488,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
         await api.patch(`/chats/${id}`, { projectId, model });
       }
       setPendingUser({ id: "pending", role: "user", content: text, attachments: files, createdAt: new Date().toISOString() });
-      await sendMessage(id, text, model, { attachments: files.length ? files : undefined, mode });
+      await sendMessage(id, text, model, { attachments: files.length ? files : undefined });
       refresh();
       // A new chat gets its own address, so "New chat" starts another one while this keeps running.
       if (fresh) return go({ kind: "chat", chatId: id });
@@ -713,7 +710,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
           <textarea
             ref={textarea}
             rows={1}
-            placeholder={live ? "Add a note for Syph while it works…" : longMode ? "Describe the long task. Syph drafts a contract for you to approve first." : project ? `Message Syph in ${project.name}` : "Message Syph"}
+            placeholder={live ? "Add a note for Syph while it works…" : project ? `Message Syph in ${project.name}` : "Message Syph"}
             value={draft}
             onChange={(e) => onDraft(e.target.value, e.target.selectionStart ?? e.target.value.length)}
             onPaste={(e) => {
@@ -760,9 +757,6 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             <button className="icon-btn sm attach" onClick={() => fileInput.current?.click()} aria-label="Attach files" title="Attach files (or drop or paste them)"><Paperclip size={16} /></button>
             <input ref={fileInput} type="file" multiple hidden onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ""; }} />
             <RepoComposerMenu chatId={cid} projectId={projectId} ensureChat={ensureChat} />
-            <button className={`pill ${longMode ? "on" : ""}`} onClick={() => setLongMode((m) => !m)} disabled={!!live} title="Long task: Syph first drafts a contract (goal, scope, the checks that prove it's done) for you to approve, then works to it">
-              <Flag size={15} /> Long task
-            </button>
             <button className={`pill yolo ${yolo ? "on" : ""}`} onClick={toggleYolo} title={yolo ? "YOLO is on: shell (PowerShell) and other ask-first tools run without asking. Click to turn off." : "Turn on YOLO: run shell (PowerShell) and other ask-first tools without asking."}>
               <Zap size={15} fill={yolo ? "currentColor" : "none"} /> {yolo ? "YOLO on" : "Ask first"}
             </button>

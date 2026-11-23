@@ -35,6 +35,17 @@ export function resolveModel(ref: string, home: Home): ResolvedModel {
 
 const fileFor = (ref: string) => `profiles/${ref.replace(/[^\w.-]+/g, "_")}.json`;
 
+// Context windows the providers report, by model reference. Syph uses the whole window of the model
+// you pick unless you set a smaller one for that model in Settings.
+const WINDOWS = "cache/context-windows.json";
+const readWindows = (home: Home) => readJson<Record<string, number>>(home.path(WINDOWS), {});
+function rememberWindows(home: Home, found: Record<string, number>) {
+  const clean = Object.fromEntries(Object.entries(found).filter(([, n]) => Number.isFinite(n) && n >= 1024));
+  if (!Object.keys(clean).length) return;
+  writeJson(home.path(WINDOWS), { ...readWindows(home), ...clean });
+}
+export const knownContextWindow = (home: Home, ref: string): number | undefined => readWindows(home)[ref];
+
 /** Profile for a model: the stored file if any, otherwise sensible defaults by provider. */
 export function getProfile(home: Home, ref: string): ModelProfile {
   const stored = readJson<Partial<ModelProfile> | null>(home.path(fileFor(ref)), null);
@@ -48,7 +59,53 @@ export function getProfile(home: Home, ref: string): ModelProfile {
     fewShot: local ? 2 : 0,
     temperature: 0.3,
   };
-  return { ...guess, ...base, ...stored, id: ref } as ModelProfile;
+  const p = { ...guess, ...base, ...stored, id: ref } as ModelProfile;
+  // The model's full window wins over a default or a stale saved number, unless the user chose a limit.
+  const known = knownContextWindow(home, ref);
+  if (known && !p.contextWindowSet) p.contextWindow = known;
+  return p;
+}
+
+/**
+ * Look up the context window of the model about to be used, once, and remember it.
+ * OpenRouter reports the model's maximum. LM Studio and Ollama report what the loaded model can
+ * hold (the window it was loaded with, which is what actually fits on the request).
+ */
+export async function learnContextWindow(home: Home, ref: string): Promise<number | undefined> {
+  const known = knownContextWindow(home, ref);
+  if (known) return known;
+  try {
+    const { provider, model, baseUrl, apiKey } = resolveModel(ref, home);
+    if (provider === "mock") return undefined;
+    const root = baseUrl.replace(/\/$/, "").replace(/\/v1$/, "");
+    const t = AbortSignal.timeout(4000);
+    let n: number | undefined;
+    if (provider === "ollama" || /:11434/.test(baseUrl)) {
+      // A loaded model reports its working window; otherwise use the most the model supports.
+      const ps: any = await fetch(`${root}/api/ps`, { signal: t }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      n = ps?.models?.find((m: any) => m.name === model || m.model === model)?.context_length;
+      if (!n) {
+        const show: any = await fetch(`${root}/api/show`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model }), signal: t }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+        const info = show?.model_info ?? {};
+        const max = Object.entries(info).find(([k]) => k.endsWith(".context_length"))?.[1] as number | undefined;
+        const set = /num_ctx\s+(\d+)/.exec(show?.parameters ?? "")?.[1];
+        n = set ? Number(set) : max;
+      }
+    } else if (provider === "lmstudio" || /:1234/.test(baseUrl)) {
+      const j: any = await fetch(`${root}/api/v0/models/${encodeURIComponent(model)}`, { signal: t }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      n = j?.loaded_context_length ?? j?.max_context_length;
+    } else {
+      const j: any = await fetch(`${baseUrl.replace(/\/$/, "")}/models`, { headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {}, signal: t }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      const found: Record<string, number> = {};
+      for (const m of j?.data ?? []) if (m.context_length) found[`${provider}:${m.id}`] = m.context_length;
+      rememberWindows(home, found);
+      n = found[`${provider}:${model}`];
+    }
+    if (n) rememberWindows(home, { [ref]: Number(n) });
+    return knownContextWindow(home, ref);
+  } catch {
+    return undefined;
+  }
 }
 
 export function profilePath(ref: string) {
@@ -95,5 +152,6 @@ export async function listModels(home: Home): Promise<ModelInfo[]> {
       }
     }),
   );
+  rememberWindows(home, Object.fromEntries(out.filter((m) => m.contextWindow && m.provider !== "ollama" && m.provider !== "lmstudio").map((m) => [m.ref, m.contextWindow!])));
   return out;
 }

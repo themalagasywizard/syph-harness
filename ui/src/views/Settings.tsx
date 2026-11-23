@@ -118,8 +118,14 @@ export function SettingsView() {
                 <input className="input" type="number" min={0} max={5} value={profile.fewShot} onChange={(e) => saveProfile({ fewShot: Number(e.target.value) })} />
               </div>
               <div className="row" style={{ gridTemplateColumns: "1fr 120px" }}>
-                <div><div className="name">Context window</div><div className="sub">Tokens. Older turns are summarised past 60%.</div></div>
-                <input className="input" type="number" min={2048} step={1024} value={profile.contextWindow} onChange={(e) => saveProfile({ contextWindow: Number(e.target.value) })} />
+                <div>
+                  <div className="name">Context window</div>
+                  <div className="sub">
+                    {profile.contextWindowSet ? "Your limit, in tokens. " : "The model's full window, read from the provider. "}Older turns are summarised past 60%.
+                    {profile.contextWindowSet && <> <button className="link-btn" style={{ color: "var(--accent)" }} onClick={() => saveProfile({ contextWindowSet: false })}>Use the model's maximum</button></>}
+                  </div>
+                </div>
+                <input className="input" type="number" min={2048} step={1024} value={profile.contextWindow} onChange={(e) => saveProfile({ contextWindow: Number(e.target.value), contextWindowSet: true })} />
               </div>
               <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
                 <div><div className="name">Native tool calling</div><div className="sub">Turn off for local models that don't support tools; Syph uses a text protocol instead.</div></div>

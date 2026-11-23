@@ -18,7 +18,7 @@ import { Home } from "./home.ts";
 import { addUsage, emptyUsage, runAgent, STEER_PREFIX } from "./loop.ts";
 import { connectMcp, type McpConnection } from "./mcp.ts";
 import { complete } from "./providers/llm.ts";
-import { getProfile, listModels, saveProfile } from "./providers/models.ts";
+import { getProfile, learnContextWindow, listModels, saveProfile } from "./providers/models.ts";
 import { Scheduler } from "./scheduler.ts";
 import { getStrategy } from "./strategies/index.ts";
 import * as store from "./store.ts";
@@ -584,6 +584,7 @@ export class Harness {
     if (chat.turns.length === 1) chat.title = (text.trim() ? text.replace(/\s+/g, " ").slice(0, 60) + (text.length > 60 ? "…" : "") : attachments.map((a) => a.name).join(", ").slice(0, 60));
     store.saveChat(this.home, chat);
 
+    await learnContextWindow(this.home, model);
     const profile = getProfile(this.home, model);
     const trace = new Trace(this.home, { kind: "chat", model, strategy: profile.strategy, chatId, projectId: chat.projectId, input: text });
     const turn: Turn = { id: id("a_"), role: "assistant", content: "", runId: trace.runId, model, toolCalls: [], createdAt: now() };
@@ -950,5 +951,7 @@ export class Harness {
   models = () => listModels(this.home);
   exportDatasets = () => exportDatasets(this.home);
   profile = (ref: string) => getProfile(this.home, ref);
+  /** The profile with the model's context window looked up first, for Settings. */
+  profileFresh = async (ref: string) => (await learnContextWindow(this.home, ref), getProfile(this.home, ref));
   saveProfile = (p: Parameters<typeof saveProfile>[1]) => saveProfile(this.home, p);
 }

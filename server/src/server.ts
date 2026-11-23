@@ -102,7 +102,7 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
     return keyStatus();
   });
 
-  route("GET", "/api/profiles/:ref", (_q, _s, p) => h.profile(decodeURIComponent(p.ref)));
+  route("GET", "/api/profiles/:ref", (_q, _s, p) => h.profileFresh(decodeURIComponent(p.ref)));
   route("PUT", "/api/profiles/:ref", (_q, _s, p, body) => (h.saveProfile({ ...h.profile(decodeURIComponent(p.ref)), ...body, id: decodeURIComponent(p.ref) }), { ok: true }));
 
   // ----- Projects -----
