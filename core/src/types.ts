@@ -242,7 +242,18 @@ export interface Turn {
   /** Files the user attached to this message (user turns). */
   attachments?: Attachment[];
   usage?: Usage;
+  /** The run failed for a reason the chat explains with its own card instead of a raw error. */
+  failure?: TurnFailure;
   createdAt: string;
+}
+
+/** The provider account ran out of credit: the chat offers a link to top up and a retry. */
+export interface TurnFailure {
+  kind: "credits";
+  /** "openrouter", "minimax", or another configured provider's name. */
+  provider: string;
+  /** Tokens the remaining balance still covers, when the provider said. */
+  affordable?: number;
 }
 
 export interface Attachment {

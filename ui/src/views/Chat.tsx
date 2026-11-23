@@ -6,7 +6,7 @@ import { CellLoader } from "../components/CellLoader";
 import { ModelPicker } from "../components/ModelPicker";
 import { useApp } from "../App";
 import { api, followChat, modelLabel, queueMessage, sendMessage, uploadAttachment, type AgentEvent, type Attachment, type Chat, type CheckResult, type FileRef, type PlanStep, type Progress, type Proposal, type RunStatus, type ToolCallView, type Turn } from "../api";
-import { ContractCard, EditDiff, QuestionCard, RecapLine, StatusLine, StopCard } from "../components/RunCards";
+import { ContractCard, CreditsCard, EditDiff, QuestionCard, RecapLine, StatusLine, StopCard } from "../components/RunCards";
 import { ActiveRepoChip, RepoComposerMenu, useOutside } from "../components/Repos";
 import { FileCard, FileIcon } from "../components/FilePreview";
 import { ExtIcon, Slot, type UiExtension } from "../ext";
@@ -281,7 +281,9 @@ function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, sta
             {turn.steering.map((t, i) => <div key={i} className="steer"><CornerDownRight size={13} /> <span>You, while it worked: {t}</span></div>)}
           </div>
         )}
-        {turn.question && !streaming ? (
+        {turn.failure?.kind === "credits" && !streaming ? (
+          <CreditsCard failure={turn.failure} onRetry={last ? onRetry : undefined} disabled={busy} />
+        ) : turn.question && !streaming ? (
           <QuestionCard question={turn.question} onAnswer={(a) => onSend?.(a)} disabled={!last || busy} />
         ) : turn.content ? (
           <Markdown text={turn.content} />
@@ -298,7 +300,7 @@ function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, sta
             <button className="icon-btn sm" aria-label="Bad response" onClick={() => rate("down")} style={rating === "down" ? { color: "var(--text)" } : undefined}><ThumbsDown size={16} fill={rating === "down" ? "currentColor" : "none"} /></button>
             <button className="icon-btn sm" aria-label="Copy" onClick={() => { navigator.clipboard.writeText(turn.content); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? <Check size={16} /> : <Copy size={16} />}</button>
             {turn.runId && rating && feedback !== "open" && feedback !== "saved" && <button className="icon-btn sm" title="Turn into eval case" onClick={() => setFeedback("open")}><FlaskConical size={16} /></button>}
-            {last && onRetry && !busy && <button className="icon-btn sm" aria-label="Retry" title="Send the last message again" onClick={onRetry}><RotateCcw size={16} /></button>}
+            {last && onRetry && !busy && !turn.failure && <button className="icon-btn sm" aria-label="Retry" title="Send the last message again" onClick={onRetry}><RotateCcw size={16} /></button>}
             {turn.model && <span className="model-tag">{turn.model.replace(/^openrouter:/, "")}</span>}
           </div>
         )}
@@ -797,7 +799,6 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             )}
           </div>
         </div>
-        <div className="disclaimer">{live ? "This chat keeps running if you switch chats or pages. Messages you send now reach it at its next step. " : ""}Syph runs locally. Changes to its own skills, memory or prompts wait for your approval in Evolve.</div>
       </div>
     </>
   );
