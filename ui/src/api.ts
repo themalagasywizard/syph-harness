@@ -50,6 +50,14 @@ export interface Contract {
   updatedAt: string;
 }
 
+export interface OngoingContract {
+  chatId: string;
+  title: string;
+  projectId?: string;
+  running: boolean;
+  progress: Progress;
+}
+
 export interface CheckResult {
   text: string;
   command?: string;

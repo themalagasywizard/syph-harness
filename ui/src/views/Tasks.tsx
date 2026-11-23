@@ -1,10 +1,92 @@
 import { useEffect, useState } from "react";
-import { MessageSquare, Play, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleCheck, Circle, Flag, Loader2, MessageSquare, Play, Plus, Trash2 } from "lucide-react";
 import { Toggle } from "../components/Toggle";
 import { ModelPicker } from "../components/ModelPicker";
 import { describeCron } from "../cron";
 import { useApp } from "../App";
-import { api, relTime, type Task } from "../api";
+import { api, relTime, type OngoingContract, type Task } from "../api";
+
+const readOpen = () => {
+  try {
+    return localStorage.getItem("syph.contractsOpen") !== "0";
+  } catch {
+    return true;
+  }
+};
+
+/** Long tasks with an approved contract: what they promise and how far they've got. Folds away. */
+function OngoingContracts() {
+  const { tick, go } = useApp();
+  const [items, setItems] = useState<OngoingContract[]>([]);
+  const [open, setOpen] = useState(readOpen);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  useEffect(() => {
+    const load = () => api.get<OngoingContract[]>("/contracts").then(setItems).catch(() => {});
+    load();
+    const i = setInterval(load, 15_000);
+    return () => clearInterval(i);
+  }, [tick]);
+  const toggle = () => {
+    setOpen((o) => {
+      try {
+        localStorage.setItem("syph.contractsOpen", o ? "0" : "1");
+      } catch {}
+      return !o;
+    });
+  };
+  if (!items.length) return null;
+  return (
+    <div className="ongoing">
+      <button className="ongoing-head" onClick={toggle} aria-expanded={open}>
+        {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        <Flag size={15} /> <span>Ongoing contracts</span> <span className="count">{items.length}</span>
+        {items.some((x) => x.running) && <span className="hint">{items.filter((x) => x.running).length} running</span>}
+      </button>
+      {open && (
+        <div className="list">
+          {items.map((x) => {
+            const c = x.progress.contract!;
+            const isOpen = expanded === x.chatId;
+            return (
+              <div key={x.chatId} className="ongoing-item">
+                <div className="ongoing-row" onClick={() => setExpanded(isOpen ? null : x.chatId)}>
+                  {x.running ? <Loader2 size={15} className="spin" /> : <Flag size={15} />}
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="name ellipsis">{c.goal || x.title}</div>
+                    <div className="sub ellipsis">
+                      {x.running ? "Running" : "Idle"} · {x.progress.done.length} step{x.progress.done.length === 1 ? "" : "s"} done
+                      {x.progress.current ? ` · now: ${x.progress.current}` : ""}
+                      {x.progress.updatedAt ? ` · ${relTime(x.progress.updatedAt)}` : ""}
+                    </div>
+                  </div>
+                  <button className="icon-btn sm" title="Open the chat" onClick={(e) => { e.stopPropagation(); go({ kind: "chat", chatId: x.chatId }); }}><MessageSquare size={14} /></button>
+                </div>
+                {isOpen && (
+                  <div className="ongoing-body">
+                    {c.doneWhen.length > 0 && (
+                      <>
+                        <div className="hint">Done when</div>
+                        <ul>{c.doneWhen.map((d) => <li key={d.text}><Circle size={12} /> {d.text}</li>)}</ul>
+                      </>
+                    )}
+                    {x.progress.done.length > 0 && (
+                      <>
+                        <div className="hint">Done so far</div>
+                        <ul>{x.progress.done.slice(-6).map((d, i) => <li key={i}><CircleCheck size={12} /> {d}</li>)}</ul>
+                      </>
+                    )}
+                    {x.progress.blocked.length > 0 && <div className="hint bad">Blocked: {x.progress.blocked[x.progress.blocked.length - 1]}</div>}
+                    {c.scope.length > 0 && <div className="hint">Scope: {c.scope.join(", ")}</div>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const presets = [
   ["Every 30 min", "*/30 * * * *"],
@@ -42,6 +124,8 @@ export function TasksView() {
           <div className="spacer" />
           <button className="btn primary" onClick={() => setEditing({ name: "", prompt: "", schedule: "0 8 * * *", enabled: true })}><Plus size={18} /> New task</button>
         </div>
+
+        <OngoingContracts />
 
         {tasks.length === 0 ? (
           <div className="empty card">No tasks yet. A task runs a prompt on a schedule, for example a morning digest of a project's notes.</div>

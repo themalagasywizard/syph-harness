@@ -330,6 +330,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState<RunStatus>();
   const [progress, setProgress] = useState<Progress>();
+  const [contractOpen, setContractOpen] = useState(false);
   const [liveChecks, setLiveChecks] = useState<CheckResult[]>();
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(0);
@@ -601,6 +602,16 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
         <div className="spacer" />
         <ActiveRepoChip chatId={cid} projectId={projectId} />
         <Slot name="chat.header" ctx={slotCtx} />
+        {cid && progress?.contract && !progress.contract.draft && (
+          <div className="model-menu">
+            <button className={`pill ${contractOpen ? "on" : ""}`} onClick={() => setContractOpen((o) => !o)} aria-expanded={contractOpen} title="The contract this long task works to"><Flag size={15} /> Contract</button>
+            {contractOpen && (
+              <div className="menu contract-menu" style={{ right: 0 }}>
+                <ContractCard chatId={cid} progress={progress} checks={lastChecks} live={!!live} onChanged={setProgress} onStart={() => send("The contract is approved. Start the work, and keep to it.")} startOpen />
+              </div>
+            )}
+          </div>
+        )}
         {chatFiles.length > 0 && (
           <div className="model-menu">
             <button className="pill" onClick={() => setFilesOpen((o) => !o)} title="Files this chat created or changed"><Files size={15} /> {chatFiles.length} file{chatFiles.length === 1 ? "" : "s"}</button>
@@ -638,7 +649,6 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             </div>
           ) : (
             <>
-              {cid && progress?.contract && <ContractCard chatId={cid} progress={progress} checks={lastChecks} live={!!live} onChanged={setProgress} onStart={() => send("The contract is approved. Start the work, and keep to it.")} />}
               {turns.map((t, i) =>
                 t.role === "user" ? (
                   <div key={t.id} className="msg user">
@@ -655,6 +665,9 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
                 ),
               )}
               {live && <AssistantTurn turn={live} streaming approval={approval} onApprove={answer} note={note} startedAt={liveStart} status={status} />}
+              {cid && progress?.contract?.draft && !live && (
+                <div className="msg contract-msg"><ContractCard chatId={cid} progress={progress} checks={lastChecks} onChanged={setProgress} onStart={() => send("The contract is approved. Start the work, and keep to it.")} /></div>
+              )}
               {queued.length > 0 && (
                 <div className="queued">{queued.map((q, i) => <div key={i} className="steer"><Clock size={13} /> <span>Queued for the next step: {q}</span></div>)}</div>
               )}

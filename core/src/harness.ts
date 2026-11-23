@@ -395,6 +395,21 @@ export class Harness {
   }
 
   /** The chat's contract and progress, for the UI. */
+  /** Approved contracts still in play, newest first, one per progress file (a task's runs share one). */
+  ongoingContracts() {
+    const seen = new Set<string>();
+    const out: { chatId: string; title: string; projectId?: string; running: boolean; progress: ReturnType<typeof readProgress> }[] = [];
+    for (const c of store.listChats(this.home)) {
+      const key = progressKey(c);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const p = readProgress(this.home, key);
+      if (!p.contract || p.contract.draft) continue;
+      out.push({ chatId: c.id, title: c.title, projectId: c.projectId, running: this.isLive(c.id), progress: p });
+    }
+    return out;
+  }
+
   progressOf(chatId: string) {
     const chat = store.getChat(this.home, chatId);
     if (!chat) throw Object.assign(new Error(`No chat ${chatId}`), { status: 404 });

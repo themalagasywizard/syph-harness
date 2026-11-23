@@ -138,6 +138,7 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   route("POST", "/api/chats/:id/attachments", (_q, _s, p, body) => h.saveUpload(p.id, String(body?.name ?? ""), String(body?.data ?? "")));
   // A message sent while the chat works: the agent reads it at its next step.
   route("POST", "/api/chats/:id/queue", (_q, _s, p, body) => h.queueMessage(p.id, String(body?.text ?? "")));
+  route("GET", "/api/contracts", () => h.ongoingContracts());
   route("GET", "/api/chats/:id/contract", (_q, _s, p) => h.progressOf(p.id));
   route("PUT", "/api/chats/:id/contract", (_q, _s, p, body) => h.updateContract(p.id, body ?? {}));
   // Files in a workspace, for @-mentions in the message box.

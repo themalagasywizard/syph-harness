@@ -41,9 +41,9 @@ function CheckIcon({ s }: { s: CheckResult["status"] | "pending" }) {
 }
 
 /** The contract: goal, scope and the done-when checks with their real results. Drafts are edited and approved here. */
-export function ContractCard({ chatId, progress, checks, live, onChanged, onStart }: { chatId: string; progress?: Progress; checks?: CheckResult[]; live?: boolean; onChanged: (p: Progress) => void; onStart: () => void }) {
+export function ContractCard({ chatId, progress, checks, live, onChanged, onStart, startOpen }: { chatId: string; progress?: Progress; checks?: CheckResult[]; live?: boolean; onChanged: (p: Progress) => void; onStart: () => void; startOpen?: boolean }) {
   const c = progress?.contract;
-  const [open, setOpen] = useState(!!c?.draft);
+  const [open, setOpen] = useState(!!c?.draft || !!startOpen);
   const [edit, setEdit] = useState<Contract | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
