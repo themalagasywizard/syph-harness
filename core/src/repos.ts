@@ -2,9 +2,9 @@
 // project, so every chat in it sees them, or to a single chat. Git runs here with the GitHub token
 // passed in the environment for github.com only, so it never lands in a repository's own config.
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import type { Home } from "./home.ts";
 import * as store from "./store.ts";
@@ -421,6 +421,52 @@ export function repoTools(host: RepoHost): Tool[] {
 }
 
 /** For the system prompt: which repos this chat works on. */
+const GUIDES = /^(agents|claude|contributing|readme|rules|conventions|architecture|style(guide)?|development|hacking)\.md$/i;
+
+/**
+ * A map of a repo's own rules and docs: where they are and what they cover, not their full text.
+ * The agent reads the one it needs when the task reaches it.
+ */
+export function repoMap(root: string, name: string, maxFiles = 12): string {
+  const found: string[] = [];
+  const walk = (dir: string, depth: number) => {
+    if (depth < 0 || found.length >= maxFiles) return;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir).sort();
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (found.length >= maxFiles) return;
+      if (e.startsWith(".") && e !== ".github") continue;
+      if (["node_modules", "dist", "build", "vendor", "target", "venv", ".venv"].includes(e)) continue;
+      const full = join(dir, e);
+      let isDir = false;
+      try {
+        isDir = statSync(full).isDirectory();
+      } catch {
+        continue;
+      }
+      if (isDir) walk(full, e === "docs" || e === ".github" ? Math.max(depth - 1, 1) : depth - 1);
+      else if (GUIDES.test(e) || (/[/\\]docs$/.test(dir) && e.endsWith(".md"))) found.push(full);
+    }
+  };
+  walk(root, 3);
+  if (!found.length) return "";
+  const rows = found.map((f) => {
+    let heads: string[] = [];
+    try {
+      heads = readFileSync(f, "utf8").split("\n").filter((l) => /^#{1,3} /.test(l)).map((l) => l.replace(/^#+ /, "").trim()).slice(0, 6);
+    } catch {
+      /* unreadable */
+    }
+    const rel = relative(root, f).split(sep).join("/");
+    return `- ${name}/${rel}${heads.length ? `: ${heads.join(" · ").slice(0, 200)}` : ""}`;
+  });
+  return `Rules and docs in ${name} (read the one that applies before you change that part; AGENTS.md or CLAUDE.md files hold rules for their folder):\n${rows.join("\n")}`;
+}
+
 export async function repoPrompt(home: Home, chat: ChatRecord | null, projectId?: string): Promise<string> {
   const all = linkedRepos(home, { chatId: chat?.id, projectId });
   if (!all.length) return "# Repositories\nNo repository is linked yet. When the user wants to work on code from GitHub, clone it with github_clone (it links the repo here), or list theirs with github_repos.";
@@ -430,6 +476,7 @@ export async function repoPrompt(home: Home, chat: ChatRecord | null, projectId?
     "# Repositories",
     "Linked to this chat (the active one is what the user is working on):",
     ...rows.map((s) => `- ${s.name}${active && resolve(active.path) === resolve(s.path) ? " (active)" : ""}: ${s.url}, cloned at ${s.path}${s.exists ? `, branch ${s.branch ?? "?"}, ${s.dirty ?? 0} uncommitted, ${s.ahead ?? 0} ahead / ${s.behind ?? 0} behind` : " (folder missing)"}.`),
+    ...(active && existsSync(active.path) ? [repoMap(active.path, active.name)].filter(Boolean) : []),
     "Work on them yourself: the file tools reach each one as <name>/, and the git tool runs git in it, signed in to GitHub. Pull first, commit with clear messages, and push when the work is done, to main unless the user asked for a branch or a pull request (github_pr_create). Use github_api for issues, reviews, Actions and anything else on GitHub.",
   ].join("\n");
 }

@@ -52,6 +52,20 @@ Link a repository and Syph works on it on its own: it pulls, edits, commits with
 
 For tasks with several steps, Syph shows its plan as a checklist at the top of its answer and ticks steps off as it works, like Claude Code does. Its tool calls fold into one line, such as **Used 12 tools · 48.3s**. Click it to see each call and its result.
 
+### Long tasks
+
+Syph keeps long work on track with the harness, not with longer prompts:
+
+- **Contract.** Click **Long task** in the message box (or just ask for a big job). Syph looks around, then drafts a contract: the goal, the paths it may change, the paths it must never touch, and *done when* checks, which are commands such as `npm test`. You edit and approve it, and the work starts. Writes outside the scope are refused.
+- **Checks, not claims.** When the work is finished, Syph runs the done-when commands itself and shows the exit codes in the contract card. If one fails, the real output goes back to the agent so it fixes the cause.
+- **Progress outside the chat.** Decisions, dead ends and finished steps are saved to a progress file (in `~/.syph/progress/`). Every turn reads it, so nothing is lost when old messages are trimmed, and scheduled Tasks resume where the last run stopped.
+- **Exits.** A run pauses at its budget (Settings → Long tasks: steps, dollars and minutes per run) and shows **Continue**. If the same error comes back twice, it stops and says what it needs instead of burning tokens.
+- **Steer while it works.** Messages you send during a run reach the agent at its next step. When it needs a decision, it asks with answer buttons.
+- **Checkpoints.** After each finished plan step in a linked repo, Syph saves a checkpoint commit on `refs/syph/checkpoints/`. Your branch is never touched and nothing is pushed.
+- **Lean context.** Old tool output is cut down to a short stub, file reads come in pages, and app and MCP tools are loaded only when a chat asks for them. Anthropic and Gemini models through OpenRouter use prompt caching, and the status line shows how much was cached.
+
+Drop or paste files and images into the message box to attach them. Type `/` for skills and `@` for files.
+
 ### Files Syph makes
 
 Every file a chat creates or changes shows up under the answer as a card. That covers files from `write_file` and files a script writes, such as a deck built by a Python script. Each card shows:

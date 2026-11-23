@@ -23,6 +23,7 @@ export function SettingsView() {
   }, [profileRef]);
 
   if (!cfg || !state) return null;
+  const agent = cfg.agent ?? { maxSteps: 40 };
   const patch = async (p: Partial<Config> | Record<string, unknown>) => {
     await api.put("/settings", p);
     refresh();
@@ -146,6 +147,48 @@ export function SettingsView() {
             <div style={{ minWidth: 0 }}><div className="name">YOLO for scheduled Tasks</div><div className="sub wrap">Tasks run with nobody watching, so they decline ask-first tools unless this is on.</div></div>
             <Toggle on={!!cfg.approval.yoloTasks} onChange={(v) => patch({ approval: { yoloTasks: v } })} label="YOLO for scheduled Tasks" />
           </div>
+        </div>
+
+        <div className="section-label" style={{ paddingLeft: 0 }}>Long tasks</div>
+        <div className="list" style={{ marginBottom: 32 }}>
+          {([
+            ["maxSteps", "Steps per run", "Tool steps before a run pauses with a status and a Continue button.", 1, 500],
+            ["maxUsdPerRun", "Spend per run (USD)", "0 means no cap. The daily budgets below still apply.", 0, 50],
+            ["maxMinutes", "Minutes per run", "0 means no cap.", 0, 600],
+          ] as const).map(([key, name, sub, min, max]) => (
+            <div className="row" style={{ gridTemplateColumns: "1fr 120px" }} key={key}>
+              <div><div className="name">{name}</div><div className="sub">{sub}</div></div>
+              <input className="input" type="number" min={min} max={max} step={key === "maxUsdPerRun" ? 0.1 : 1} value={agent[key] ?? 0} onChange={(e) => patch({ agent: { ...agent, [key]: Number(e.target.value) } })} />
+            </div>
+          ))}
+          <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
+            <div style={{ minWidth: 0 }}><div className="name">Git checkpoints</div><div className="sub wrap">After each finished plan step, save the linked repo's state on a side ref (refs/syph/checkpoints). Never touches your branch, never pushes.</div></div>
+            <Toggle on={!!agent.gitCheckpoints} onChange={(v) => patch({ agent: { ...agent, gitCheckpoints: v } })} label="Git checkpoints" />
+          </div>
+          <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
+            <div style={{ minWidth: 0 }}><div className="name">Load app tools on demand</div><div className="sub wrap">Connector and MCP tools are sent to the model only once a chat asks for them, which saves tokens on every step.</div></div>
+            <Toggle on={!!agent.lazyTools} onChange={(v) => patch({ agent: { ...agent, lazyTools: v } })} label="Load app tools on demand" />
+          </div>
+          <div className="row" style={{ gridTemplateColumns: "1fr" }}>
+            <div style={{ minWidth: 0 }}>
+              <div className="name">Commands scheduled Tasks may run</div>
+              <div className="sub wrap">One per line, matched at the start (for example <code>npm test</code>). Everything else that asks first is declined in Tasks unless YOLO for Tasks is on.</div>
+              <textarea className="input mono" rows={3} style={{ marginTop: 8 }} defaultValue={(cfg.approval.taskCommands ?? []).join("\n")} onBlur={(e) => patch({ approval: { taskCommands: e.target.value.split("\n").map((x) => x.trim()).filter(Boolean) } })} />
+            </div>
+          </div>
+          {(cfg.approval.allowCommands ?? []).length > 0 && (
+            <div className="row" style={{ gridTemplateColumns: "1fr" }}>
+              <div style={{ minWidth: 0 }}>
+                <div className="name">Always-allowed commands</div>
+                <div className="sub wrap">Chosen with “Always allow” in chat. They run without asking.</div>
+                <div className="att-chips" style={{ marginTop: 8 }}>
+                  {(cfg.approval.allowCommands ?? []).map((c) => (
+                    <span key={c} className="att-chip"><code className="ellipsis">{c}</code><button className="att-x" aria-label={`Stop allowing ${c}`} onClick={() => patch({ approval: { allowCommands: (cfg.approval.allowCommands ?? []).filter((x) => x !== c) } })}>×</button></span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <InterfaceSettings />

@@ -87,7 +87,7 @@ function useElapsed(start?: number) {
 function ToolGroup({ calls, live, startedAt, durationMs }: { calls: ToolCallView[]; live?: boolean; startedAt?: number; durationMs?: number }) {
   const [open, setOpen] = useState(false);
   const elapsed = useElapsed(live ? startedAt : undefined);
-  const visible = calls.filter((c) => c.name !== "update_plan");
+  const visible = calls.filter((c) => c.name !== "update_plan" && c.name !== "ask_user");
   if (!visible.length) return null;
   const running = live ? visible.find((c) => c.ok === undefined) : undefined;
   const failed = visible.filter((c) => c.ok === false).length;

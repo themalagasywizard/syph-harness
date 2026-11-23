@@ -240,3 +240,64 @@ test("long-task mode drafts a contract with read-only tools until the user appro
   await h.chat(chat.id, "approved, go");
   assert.ok(offered[0].includes("write_file"));
 });
+
+test("app tools load on demand, and the prompt prefix is cache-friendly", async () => {
+  const { z } = await import("zod");
+  const { defineTool } = await import("../src/tools/types.ts");
+  const { findToolsTool } = await import("../src/longtask.ts");
+  const { wireMessages } = await import("../src/providers/client.ts");
+  const mail = defineTool({ name: "gmail_send", description: "Send an email with Gmail.", schema: z.object({}), permission: "auto", run: () => "sent" });
+  const cal = defineTool({ name: "calendar_list", description: "List calendar events.", schema: z.object({}), permission: "auto", run: () => "none" });
+  const reg: ToolRegistry = new ToolRegistry([...builtinTools, findToolsTool((ctx) => reg.hidden(ctx)), mail, cal], {}, ["gmail_send", "calendar_list"]);
+  const home = tempHome();
+  const ctx = { ...ctxFor(home), loadedTools: new Set<string>() };
+  ctx.hooks.loadTools = (n) => n.forEach((x) => ctx.loadedTools.add(x));
+  assert.ok(!reg.specs(ctx).some((t) => t.name === "gmail_send"));
+  const r = await reg.execute("find_tools", JSON.stringify({ query: "send an email" }), ctx);
+  assert.match(r.result, /gmail_send/);
+  assert.ok(reg.specs(ctx).some((t) => t.name === "gmail_send"));
+  assert.ok(!reg.specs(ctx).some((t) => t.name === "calendar_list"));
+  // Cache breakpoints on the system prompt and the newest user message only.
+  const wired = wireMessages([{ role: "system", content: "s" }, { role: "user", content: "a" }, { role: "assistant", content: "b" }, { role: "user", content: "c" }], true) as any[];
+  assert.equal(wired[0].content[0].cache_control.type, "ephemeral");
+  assert.equal(typeof wired[1].content, "string");
+  assert.equal(wired[3].content[0].cache_control.type, "ephemeral");
+  const { buildSystemPrompt } = await import("../src/context.ts");
+  const sys = buildSystemPrompt(home, { model: "mock:main", query: "x", connectors: "# Connectors\nnone", extra: "# Progress so far" });
+  assert.ok(sys.indexOf("# Connectors") < sys.indexOf("Today is") && sys.indexOf("Today is") < sys.indexOf("# Progress so far"));
+});
+
+test("scope globs, repo maps and the Tasks command allow-list", async () => {
+  const { scopeViolation } = await import("../src/scope.ts");
+  const c = { goal: "g", scope: ["api/routes/**", "tests/api/"], never: ["db/**"], doneWhen: [], updatedAt: "" };
+  assert.equal(scopeViolation(c, "api/routes/v2/users.ts"), null);
+  assert.equal(scopeViolation(c, "tests/api/a.test.ts"), null);
+  assert.match(scopeViolation(c, "auth/login.ts")!, /outside this task's scope/);
+  assert.match(scopeViolation(c, "db/config.ts")!, /off limits/);
+  const { mkdtempSync, mkdirSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { repoMap } = await import("../src/repos.ts");
+  const dir = mkdtempSync(join(tmpdir(), "syph-map-"));
+  writeFileSync(join(dir, "AGENTS.md"), "# Rules\n## Error format\n## Naming\n");
+  mkdirSync(join(dir, "api"));
+  writeFileSync(join(dir, "api", "RULES.md"), "# API rules\n");
+  mkdirSync(join(dir, "node_modules"));
+  writeFileSync(join(dir, "node_modules", "README.md"), "# nope");
+  const map = repoMap(dir, "demo");
+  assert.match(map, /demo\/AGENTS\.md: Rules · Error format · Naming/);
+  assert.match(map, /demo\/api\/RULES\.md/);
+  assert.ok(!map.includes("node_modules"));
+  // Unattended tasks run only the commands the user allowed for Tasks.
+  const home = tempHome({ approval: { taskCommands: ["echo ok"] } });
+  const h = await new Harness(home).init({ mcp: false });
+  mock("main", (req) => {
+    const t = req.messages.filter((m) => m.role === "tool").map((m) => m.content ?? "");
+    if (t.length === 0) return reply("", [call("shell", { command: "echo ok" })]);
+    if (t.length === 1) return reply("", [call("shell", { command: "echo nope" })]);
+    return reply(t.join(" | "));
+  });
+  const task = store.upsertTask(home, { name: "t", prompt: "run", schedule: "0 3 * * *" });
+  await h.runTask(task.id);
+  const out = store.getChat(home, store.listTasks(home)[0].lastChatId!)!.turns.at(-1)!.content;
+  assert.match(out, /exit code: 0[\s\S]*declined/);
+});

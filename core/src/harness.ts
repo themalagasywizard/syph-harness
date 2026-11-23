@@ -5,7 +5,7 @@ import { googleWorkspace } from "./connectors/google.ts";
 import { GITHUB_API, github, listGithubRepos } from "./connectors/github.ts";
 import { activeRepo, allLinkedRepos, checkpointCommit, cloneAndLink, explainGitError, git, linkedRepos, repoPrompt, repoStatus, repoTools, setActiveRepo, unlinkRepo, type RepoHost } from "./repos.ts";
 import { planPrompt, updatePlanTool } from "./plan.ts";
-import { failedChecksMessage, longTaskPrompt, longTaskTools, planToProgress, progressKey, progressPrompt, readProgress, runChecks, updateProgress } from "./longtask.ts";
+import { failedChecksMessage, findToolsTool, longTaskPrompt, longTaskTools, planToProgress, progressKey, progressPrompt, readProgress, runChecks, updateProgress } from "./longtask.ts";
 import { connectorAgentTools, connectorPrompt } from "./connectors/agent-tools.ts";
 import { buildSystemPrompt, compactHistory, elideToolResult } from "./context.ts";
 import { caseFromRun, evalHistory, listCases, runSuite } from "./evals/index.ts";
@@ -39,7 +39,8 @@ const commandOf = (tool: string, args: unknown) => (tool === "shell" && args && 
 
 /** Facts for the end-of-run recap, taken from what the harness saw, not from the answer. */
 function recapOf(turn: Turn, stopReason: Recap["stopReason"]): Recap {
-  const calls = (turn.toolCalls ?? []).filter((c) => !["update_plan", "note_progress", "set_contract", "ask_user"].includes(c.name));
+  // Counted like the chat's tool row: everything but the plan and the question, which have their own cards.
+  const calls = (turn.toolCalls ?? []).filter((c) => c.name !== "update_plan" && c.name !== "ask_user");
   const ran = (turn.checks ?? []).filter((c) => c.status !== "skipped");
   return {
     stopReason,
@@ -145,8 +146,24 @@ export class Harness {
   private broadcast: Listener = (e) => this.listeners.forEach((l) => l(e));
 
   tools(): ToolRegistry {
-    const connectorTools = [...connectorAgentTools(this.connectors, () => this.broadcast({ type: "connectors" })), ...this.connectors.tools()];
-    return new ToolRegistry([...builtinTools, updatePlanTool, ...longTaskTools, ...this.extTools, ...connectorTools, ...repoTools(this.repoHost), ...uiAgentTools(this.home, () => this.uiEnv()), ...this.mcp.flatMap((m) => m.tools)], this.home.config().toolPermissions ?? {});
+    const appTools = [...this.connectors.tools(), ...this.mcp.flatMap((m) => m.tools)];
+    // Tools for apps and MCP servers are shown only once a chat asks for them (find_tools).
+    const lazy = this.home.config().agent.lazyTools ? appTools.map((t) => t.name) : [];
+    const reg: ToolRegistry = new ToolRegistry(
+      [...builtinTools, updatePlanTool, ...longTaskTools, ...(lazy.length ? [findToolsTool((ctx) => reg.hidden(ctx))] : []), ...this.extTools, ...connectorAgentTools(this.connectors, () => this.broadcast({ type: "connectors" })), ...repoTools(this.repoHost), ...uiAgentTools(this.home, () => this.uiEnv()), ...appTools],
+      this.home.config().toolPermissions ?? {},
+      lazy,
+    );
+    return reg;
+  }
+
+  /** The prompt line about tools that load on demand. */
+  private lazyToolsPrompt() {
+    if (!this.home.config().agent.lazyTools) return "";
+    const hidden = this.tools().hidden();
+    if (!hidden.length) return "";
+    const groups = [...new Set(hidden.map((t) => t.name.split(/__|_/)[0]))];
+    return `# Tools on demand\nTools for ${groups.join(", ")} (${hidden.length} in all) aren't loaded yet, to save context. Call find_tools with what you need (for example "send email" or "list issues") and they become usable on your next step.`;
   }
 
   // ---------- GitHub and linked repositories ----------
@@ -255,7 +272,7 @@ export class Harness {
 
   /** The system prompt section about connectors, the interface, plans and the chat's repos. */
   private async appPrompt(projectId?: string, chat?: ChatRecord | null) {
-    const parts = [connectorPrompt(this.connectors), uiPrompt, planPrompt, longTaskPrompt, `# Files you make\nYour workspace folder is ${store.workspaceFor(this.home, projectId)}. Save documents, decks, sheets and other deliverables inside it (for example in reports/): every file you create or change there appears in the chat with a preview, its full path and Open / Show in folder buttons. When you finish, name the file and its full path.`];
+    const parts = [connectorPrompt(this.connectors), this.lazyToolsPrompt(), uiPrompt, planPrompt, longTaskPrompt, `# Files you make\nYour workspace folder is ${store.workspaceFor(this.home, projectId)}. Save documents, decks, sheets and other deliverables inside it (for example in reports/): every file you create or change there appears in the chat with a preview, its full path and Open / Show in folder buttons. When you finish, name the file and its full path.`];
     const gh = this.githubState();
     parts.push(await repoPrompt(this.home, chat ?? null, projectId));
     parts.push(gh.connected ? `GitHub is connected${gh.account ? ` as ${gh.account}` : ""}: handle it yourself with github_repos, github_clone, git, github_pr_create and github_api.` : "GitHub isn't connected, so only public repos can be cloned. If the user wants their own repos, ask them to open Connectors → GitHub and paste a token.");
@@ -421,7 +438,7 @@ export class Harness {
 
   private toolContext(runId: string, opts: { projectId?: string; chatId?: string; approve: ToolContext["approve"]; signal?: AbortSignal; model: string; depth?: number; onPlan?: (steps: PlanStep[]) => void; progressKey?: string; onContract?: (c: Contract) => void }): ToolContext {
     const key = opts.progressKey;
-    return {
+    const ctxRef: ToolContext = {
       home: this.home,
       workspace: store.workspaceFor(this.home, opts.projectId),
       projectId: opts.projectId,
@@ -436,6 +453,7 @@ export class Harness {
       },
       hooks: {
         plan: opts.onPlan,
+        loadTools: (names) => names.forEach((n) => ctxRef.loadedTools?.add(n)),
         contract: key
           ? {
               get: () => readProgress(this.home, key).contract,
@@ -483,7 +501,9 @@ export class Harness {
                 return res.content;
               },
       },
+      loadedTools: new Set(),
     };
+    return ctxRef;
   }
 
   /** Done-when checks are shell commands the model wrote: they run only when the shell would. */
@@ -596,7 +616,7 @@ export class Harness {
       };
       const approve = opts.approve ?? this.interactiveApprove(relay, opts.signal, chatId);
       const ctx = this.toolContext(trace.runId, { projectId: chat.projectId, chatId, approve, signal: opts.signal, model, onPlan, progressKey: key, onContract: (c) => relay({ type: "contract", contract: c }) });
-      ctx.loadedTools = new Set(chat.loadedTools ?? []);
+      for (const t of chat.loadedTools ?? []) ctx.loadedTools!.add(t);
       const tools = drafting ? this.tools().pick(DRAFT_TOOLS) : this.tools();
       const strategy = getStrategy(profile.strategy);
       const inbox = () => {

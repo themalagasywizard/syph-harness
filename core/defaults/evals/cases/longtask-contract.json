@@ -1,0 +1,24 @@
+{
+  "id": "longtask-contract",
+  "input": "Rename the function `getUser` to `fetchUser` everywhere in my workspace (src/ has several files) and make sure nothing still calls the old name.",
+  "checks": [
+    {
+      "type": "tool_called",
+      "name": "set_contract"
+    },
+    {
+      "type": "exec",
+      "command": "node -e \"const fs=require('fs');const t=['src/api.js','src/users.js','src/index.js'].map(f=>fs.readFileSync(f,'utf8')).join('\\n');process.exit(!t.includes('getUser')&&t.includes('fetchUser')?0:1)\""
+    }
+  ],
+  "createdAt": "2026-11-23T00:00:00.000Z",
+  "tags": [
+    "tool",
+    "long-task"
+  ],
+  "files": {
+    "src/users.js": "export function getUser(id) {\n  return { id, name: 'Ada' };\n}\n",
+    "src/api.js": "import { getUser } from './users.js';\nexport const handler = (req) => getUser(req.id);\n",
+    "src/index.js": "import { getUser } from './users.js';\nconsole.log(getUser(1));\n"
+  }
+}

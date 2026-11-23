@@ -132,6 +132,26 @@ export const askUserTool = defineTool({
 
 export const longTaskTools = [setContractTool, noteProgressTool, askUserTool];
 
+/** The model loads connector and MCP tools by need, so they don't cost tokens on every step. */
+export function findToolsTool(hidden: (ctx: ToolContext) => { name: string; description: string }[]) {
+  return defineTool({
+    name: "find_tools",
+    description: "Load tools for connected apps and MCP servers (email, calendar, files, issues…). Describe what you need in a few words; matching tools become available on your next step.",
+    schema: z.object({ query: z.string().min(2).max(200) }),
+    permission: "auto",
+    run: ({ query }, ctx) => {
+      const all = hidden(ctx);
+      if (!all.length) return "Every tool is already loaded.";
+      const words = query.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+      const score = (t: { name: string; description: string }) => words.reduce((n, w) => n + (t.name.toLowerCase().includes(w) ? 3 : 0) + (t.description.toLowerCase().includes(w) ? 1 : 0), 0);
+      const hits = all.map((t) => ({ t, n: score(t) })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n).slice(0, 12).map((x) => x.t);
+      if (!hits.length) return `No tool matches "${query}". Groups available: ${[...new Set(all.map((t) => t.name.split(/__|_/)[0]))].join(", ")}. Try one of those words.`;
+      ctx.hooks.loadTools?.(hits.map((t) => t.name));
+      return `Loaded ${hits.length} tool${hits.length === 1 ? "" : "s"}, usable from your next step:\n${hits.map((t) => `- ${t.name}: ${t.description.split("\n")[0].slice(0, 160)}`).join("\n")}`;
+    },
+  });
+}
+
 /**
  * Run the contract's done-when commands. They come from the model, so each runs only when the
  * user would allow the shell anyway (YOLO, an always-allowed command) or approves it now.

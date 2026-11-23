@@ -10,6 +10,9 @@ import { complete } from "../providers/llm.ts";
 import { getProfile } from "../providers/models.ts";
 import { getStrategy } from "../strategies/index.ts";
 import { builtinTools } from "../tools/builtin.ts";
+import { longTaskPrompt, longTaskTools } from "../longtask.ts";
+import { planPrompt, updatePlanTool } from "../plan.ts";
+import type { Contract } from "../types.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { Tool, ToolContext } from "../tools/types.ts";
 import { loadExtensions } from "../extensions.ts";
@@ -31,7 +34,7 @@ export function isHeldOut(home: Home, caseId: string) {
   return parseInt(hash(caseId).slice(0, 8), 16) % 1000 < frac * 1000;
 }
 
-export const EVAL_TOOLS = ["list_files", "read_file", "write_file", "edit_file", "search_files", "read_skill", "propose_memory", "propose_skill"];
+export const EVAL_TOOLS = ["list_files", "read_file", "write_file", "edit_file", "search_files", "read_skill", "propose_memory", "propose_skill", "update_plan", "set_contract", "note_progress"];
 
 export interface CaseOutput {
   answer: string;
@@ -57,6 +60,10 @@ export async function runCaseOnce(home: Home, model: string, c: EvalCase, extraT
     propose: (input) => ({ id: "eval-dry-run", kind: input.kind, title: input.title, reason: input.reason, changes: [], diff: "", source: "agent", status: "pending", createdAt: now() }) as Proposal,
     hooks: {},
   };
+  // Long-task tools work in evals too, with the contract kept in memory for the case.
+  let contract: Contract | undefined;
+  ctx.hooks.contract = { get: () => contract, set: (c) => void (contract = c) };
+  ctx.hooks.progress = () => "Saved to progress.";
   const profile = getProfile(home, model);
   try {
     const result = await getStrategy(profile.strategy).run({
@@ -64,10 +71,10 @@ export async function runCaseOnce(home: Home, model: string, c: EvalCase, extraT
       model,
       request: c.input,
       messages: [
-        { role: "system", content: buildSystemPrompt(home, { model, query: c.input }) },
+        { role: "system", content: buildSystemPrompt(home, { model, query: c.input, extra: `${planPrompt}\n\n${longTaskPrompt}` }) },
         { role: "user", content: c.input },
       ],
-      tools: new ToolRegistry([...builtinTools, ...extraTools]).pick([...EVAL_TOOLS, ...extraTools.filter((t) => t.permission === "auto").map((t) => t.name)]),
+      tools: new ToolRegistry([...builtinTools, updatePlanTool, ...longTaskTools, ...extraTools]).pick([...EVAL_TOOLS, ...extraTools.filter((t) => t.permission === "auto").map((t) => t.name)]),
       ctx,
       category: "evolve",
       maxSteps: 8,

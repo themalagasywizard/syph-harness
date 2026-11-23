@@ -16,6 +16,16 @@ import { acceptProposal, applyChanges, createProposal, kindForPath, listProposal
 
 export type Log = (msg: string) => void;
 
+/**
+ * Asked of every failure before a prompt rewrite: most "model" failures are missing harness parts.
+ * Kept in code (not only in prompts/reflector.md, which is copied once) so every home gets it.
+ */
+export const HARNESS_LENS = `Before you write a change, sort the failure with three questions:
+1. Could it see it? Did the information it needed exist in its context or files? If not: give it a map (a pointer in the system prompt or a skill to where the rule lives), not the whole rule.
+2. Could it do it? Did it have the right tool, and use it? If it guessed instead of calling a tool, or picked the wrong one: a skill with the exact steps, or a profile change.
+3. Could it tell? Was there anything that would have shown it was wrong? If not: switch the profile's strategy to "verify" (a self-check) or set a "critic" model, or add a skill step that checks the result with a tool (run it, read it back).
+Prefer the change that turns a sentence into a mechanism (a step that checks, a pointer, a profile setting) over adding another "always do X" line. Say which question failed in your diagnosis.`;
+
 const PASS = 0.8;
 
 /** Score a proposal: run the suite on the current home (baseline) and on a shadow copy with the change applied. */
@@ -125,7 +135,7 @@ export async function evolveOnce(home: Home, model: string, log: Log = () => {})
       temperature: 0.4,
       jsonMode: true,
       messages: [
-        { role: "system", content: home.read("prompts/reflector.md") ?? "" },
+        { role: "system", content: `${home.read("prompts/reflector.md") ?? ""}\n\n${HARNESS_LENS}` },
         {
           role: "user",
           content: [
