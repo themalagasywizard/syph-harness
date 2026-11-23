@@ -310,7 +310,8 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   route("PUT", "/api/connectors/:id/fields", async (_q, _s, p, body) => (C.saveFields(p.id, body?.values ?? {}), changed(C.list().find((c) => c.id === p.id))));
   route("POST", "/api/connectors/:id/enabled", async (_q, _s, p, body) => (C.setEnabled(p.id, !!body?.enabled), changed({ ok: true })));
   route("POST", "/api/connectors/:id/signin", (_q, _s, p) => ({ url: C.startOAuth(p.id, redirectUri()) }));
-  route("POST", "/api/connectors/:id/disconnect", async (_q, _s, p) => (await C.disconnect(p.id), changed({ ok: true })));
+  route("POST", "/api/connectors/:id/disconnect", async (_q, _s, p, body) => (await C.disconnect(p.id, typeof body?.account === "string" ? body.account : undefined), changed({ ok: true })));
+  route("POST", "/api/connectors/:id/default", async (_q, _s, p, body) => (await C.setDefaultAccount(p.id, String(body?.account ?? "")), changed({ ok: true })));
   route("DELETE", "/api/connectors/:id", async (_q, _s, p) => (await C.remove(p.id), changed({ ok: true })));
 
   // ----- Phone (QR pairing). Managing phones is only allowed from this computer. -----

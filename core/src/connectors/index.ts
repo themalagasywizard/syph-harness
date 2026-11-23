@@ -25,11 +25,24 @@ export interface BuiltinConnector {
   factory: ConnectorFactory;
 }
 
+interface Tokens {
+  access_token: string;
+  refresh_token?: string;
+  expires_at?: number;
+  scope?: string;
+  token_type?: string;
+}
+
 interface Secret {
   fields: Record<string, string>;
-  tokens?: { access_token: string; refresh_token?: string; expires_at?: number; scope?: string; token_type?: string };
+  /** The default account's sign-in. */
+  tokens?: Tokens;
   account?: string;
+  /** multiAccount connectors: the other signed-in accounts. Kept apart so older files still read as one account. */
+  others?: { account: string; tokens?: Tokens }[];
 }
+
+const same = (a?: string, b?: string) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
 
 const SECRETS = ["secrets", "connectors.json"] as const;
 const ID_RE = /^[a-z][a-z0-9_]{1,30}$/;
@@ -106,7 +119,7 @@ export class Connectors {
   state(m: ConnectorManifest): ConnectorStatus["state"] {
     const s = this.secret(m.id);
     if (m.fields.some((f) => f.required && !s.fields[f.key])) return "needs_setup";
-    if (m.auth === "oauth2" && !s.tokens?.access_token) return "needs_signin";
+    if (m.auth === "oauth2" && !s.tokens?.access_token && !s.others?.some((o) => o.tokens?.access_token)) return "needs_signin";
     const err = this.loaded.get(m.id)?.error;
     return err ? "error" : "ready";
   }
@@ -127,6 +140,14 @@ export class Connectors {
         state: this.state(m),
         error: loaded?.error,
         account: s.account,
+        multiAccount: m.auth === "oauth2" && !!m.multiAccount,
+        accounts:
+          m.auth === "oauth2" && (s.tokens || s.account || s.others?.length)
+            ? [
+                ...(s.tokens || s.account ? [{ account: s.account ?? "Signed in", default: true, signedIn: !!s.tokens?.access_token }] : []),
+                ...(s.others ?? []).map((o) => ({ account: o.account, default: false, signedIn: !!o.tokens?.access_token })),
+              ]
+            : undefined,
         fields: m.fields.map((f) => {
           const v = s.fields[f.key];
           return { ...f, set: !!v, value: v ? (f.secret ? mask(v) : v) : undefined };
@@ -152,20 +173,62 @@ export class Connectors {
     // A new key means the account has to be checked again.
     if (m.auth === "apiKey" && Object.keys(values ?? {}).some((k) => m.fields.some((f) => f.key === k && f.secret))) delete s.account;
     // New OAuth client details invalidate the old sign-in.
-    if (m.auth === "oauth2" && Object.keys(values ?? {}).some((k) => k === (m.oauth?.clientIdField ?? "clientId"))) delete s.tokens;
+    if (m.auth === "oauth2" && Object.keys(values ?? {}).some((k) => k === (m.oauth?.clientIdField ?? "clientId"))) {
+      delete s.tokens;
+      delete s.others;
+    }
     this.saveSecret(id, s);
   }
 
   // ---------- Signed-in fetch ----------
 
-  runtime(m: ConnectorManifest): ConnectorRuntime {
+  /** Every signed-in account of a connector, the default first. */
+  accounts(id: string): string[] {
+    const s = this.secret(id);
+    return [s.account, ...(s.others ?? []).map((o) => o.account)].filter((a): a is string => !!a);
+  }
+
+  /**
+   * Find the account the agent means: the exact address, or a unique part of one ("work" for
+   * ryan@work.com). Undefined means the default account.
+   */
+  resolveAccount(id: string, wanted?: string): string | undefined {
+    const want = wanted?.trim();
+    if (!want || want.toLowerCase() === "default") return undefined;
+    const all = this.accounts(id);
+    const exact = all.find((a) => same(a, want));
+    if (exact) return exact === this.secret(id).account ? undefined : exact;
+    const partial = all.filter((a) => a.toLowerCase().includes(want.toLowerCase()));
+    if (partial.length === 1) return partial[0] === this.secret(id).account ? undefined : partial[0];
+    const name = this.manifest(id).name;
+    if (!all.length) throw new Error(`${name} has no signed-in accounts.`);
+    throw new Error(`${partial.length > 1 ? `"${want}" matches more than one ${name} account` : `No ${name} account "${want}"`}. Signed-in accounts: ${all.join(", ")}.`);
+  }
+
+  /** The tokens for an account (undefined account: the default one). */
+  private tokensFor(s: Secret, account?: string): Tokens | undefined {
+    if (!account || same(account, s.account)) return s.tokens;
+    return s.others?.find((o) => same(o.account, account))?.tokens;
+  }
+
+  private setTokens(id: string, account: string | undefined, tokens: Tokens | undefined) {
+    const s = this.secret(id);
+    if (!account || same(account, s.account)) s.tokens = tokens;
+    else {
+      const o = s.others?.find((x) => same(x.account, account));
+      if (o) o.tokens = tokens;
+    }
+    this.saveSecret(id, s);
+  }
+
+  runtime(m: ConnectorManifest, account?: string): ConnectorRuntime {
     const get = (key: string) => this.secret(m.id).fields[key];
     const authed = async (url: string, init: RequestInit = {}, retry = true): Promise<Response> => {
       const headers = new Headers(init.headers);
       for (const [k, v] of Object.entries(m.headers ?? {})) if (!headers.has(k)) headers.set(k, v);
       let target = url;
       if (m.auth === "oauth2") {
-        headers.set("authorization", `Bearer ${await this.accessToken(m)}`);
+        headers.set("authorization", `Bearer ${await this.accessToken(m, account)}`);
       } else if (m.auth === "apiKey") {
         const how = m.apiKeyAuth ?? { header: "Authorization", value: "Bearer {apiKey}" };
         const value = how.value.replace(/\{(\w+)\}/g, (_, k) => get(k) ?? "");
@@ -174,13 +237,15 @@ export class Connectors {
       }
       const res = await fetch(mapUrl(target), { ...init, headers, signal: init.signal ?? AbortSignal.timeout(60_000) });
       if (res.status === 401 && retry && m.auth === "oauth2") {
-        await this.refresh(m, true);
+        await this.refresh(m, account, true);
         return authed(url, init, false);
       }
       return res;
     };
     return {
       id: m.id,
+      account,
+      accounts: () => this.accounts(m.id),
       get,
       fetch: authed,
       json: async (url, init = {}) => {
@@ -218,20 +283,23 @@ export class Connectors {
     return value.replace(/^(bearer|token)\s+/i, "") || null;
   }
 
-  private async accessToken(m: ConnectorManifest) {
-    const s = this.secret(m.id);
-    if (!s.tokens?.access_token) throw new Error(`${m.name} isn't signed in. Ask the user to open Connectors and sign in.`);
-    if (s.tokens.expires_at && s.tokens.expires_at < Date.now() + 60_000) return this.refresh(m);
-    return s.tokens.access_token;
+  private async accessToken(m: ConnectorManifest, account?: string) {
+    const t = this.tokensFor(this.secret(m.id), account);
+    const who = account ? `${m.name} (${account})` : m.name;
+    if (!t?.access_token) throw new Error(`${who} isn't signed in. Ask the user to open Connectors and sign in.`);
+    if (t.expires_at && t.expires_at < Date.now() + 60_000) return this.refresh(m, account);
+    return t.access_token;
   }
 
-  private async refresh(m: ConnectorManifest, force = false): Promise<string> {
+  private async refresh(m: ConnectorManifest, account?: string, force = false): Promise<string> {
     const s = this.secret(m.id);
-    if (!force && s.tokens?.expires_at && s.tokens.expires_at > Date.now() + 60_000) return s.tokens.access_token;
-    if (!s.tokens?.refresh_token || !m.oauth) throw new Error(`${m.name}'s sign-in expired. Ask the user to sign in again in Connectors.`);
+    const t = this.tokensFor(s, account);
+    const who = account ? `${m.name} (${account})` : m.name;
+    if (!force && t?.expires_at && t.expires_at > Date.now() + 60_000) return t.access_token;
+    if (!t?.refresh_token || !m.oauth) throw new Error(`${who}'s sign-in expired. Ask the user to sign in again in Connectors.`);
     const body = new URLSearchParams({
       grant_type: "refresh_token",
-      refresh_token: s.tokens.refresh_token,
+      refresh_token: t.refresh_token,
       client_id: s.fields[m.oauth.clientIdField ?? "clientId"] ?? "",
     });
     const secret = s.fields[m.oauth.clientSecretField ?? "clientSecret"];
@@ -240,14 +308,12 @@ export class Connectors {
     const data: any = await res.json().catch(() => ({}));
     if (!res.ok || !data.access_token) {
       if (data.error === "invalid_grant") {
-        delete s.tokens;
-        this.saveSecret(m.id, s);
-        throw new Error(`${m.name}'s sign-in expired or was revoked. Ask the user to sign in again in Connectors.`);
+        this.setTokens(m.id, account, undefined);
+        throw new Error(`${who}'s sign-in expired or was revoked. Ask the user to sign in again in Connectors.`);
       }
-      throw new Error(`Couldn't refresh ${m.name}'s sign-in: ${data.error_description ?? data.error ?? res.status}`);
+      throw new Error(`Couldn't refresh ${who}'s sign-in: ${data.error_description ?? data.error ?? res.status}`);
     }
-    s.tokens = { ...s.tokens, access_token: data.access_token, expires_at: Date.now() + (data.expires_in ?? 3600) * 1000, refresh_token: data.refresh_token ?? s.tokens.refresh_token };
-    this.saveSecret(m.id, s);
+    this.setTokens(m.id, account, { ...t, access_token: data.access_token, expires_at: Date.now() + (data.expires_in ?? 3600) * 1000, refresh_token: data.refresh_token ?? t.refresh_token });
     return data.access_token;
   }
 
@@ -300,29 +366,79 @@ export class Connectors {
     const res = await fetch(mapUrl(m.oauth!.tokenUrl), { method: "POST", body, headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" }, signal: AbortSignal.timeout(20_000) });
     const data: any = await res.json().catch(() => ({}));
     if (!res.ok || !data.access_token) throw new ConnectorError(`${m.name} refused the sign-in: ${data.error_description ?? data.error ?? res.status}`);
-    s.tokens = { access_token: data.access_token, refresh_token: data.refresh_token, expires_at: Date.now() + (data.expires_in ?? 3600) * 1000, scope: data.scope, token_type: data.token_type };
-    this.saveSecret(m.id, s);
+    const tokens: Tokens = { access_token: data.access_token, refresh_token: data.refresh_token, expires_at: Date.now() + (data.expires_in ?? 3600) * 1000, scope: data.scope, token_type: data.token_type };
+    let account: string | undefined;
     if (m.oauth!.userInfoUrl) {
       try {
-        const info = await this.runtime(m).json(m.oauth!.userInfoUrl);
-        s.account = info.email ?? info.name ?? info.login ?? undefined;
-        this.saveSecret(m.id, s);
+        const r = await fetch(mapUrl(m.oauth!.userInfoUrl), { headers: { authorization: `Bearer ${tokens.access_token}`, accept: "application/json", ...(m.headers ?? {}) }, signal: AbortSignal.timeout(20_000) });
+        const info: any = r.ok ? await r.json() : {};
+        account = info.email ?? info.name ?? info.login ?? undefined;
       } catch {
         /* the account name is a nicety */
       }
     }
+    const signedIn = s.tokens?.access_token || s.others?.length;
+    if (!m.multiAccount || !signedIn || !s.account || same(account, s.account)) {
+      // One account (or the default one again): this sign-in replaces the default.
+      s.tokens = tokens;
+      s.account = account ?? s.account;
+      if (!m.multiAccount) delete s.others;
+      else if (account) s.others = s.others?.filter((o) => !same(o.account, account));
+    } else {
+      // Another account: add it, or refresh its sign-in if it was here before.
+      const name = account ?? `Account ${(s.others?.length ?? 0) + 2}`;
+      s.others = [...(s.others ?? []).filter((o) => !same(o.account, name)), { account: name, tokens }];
+      account = name;
+    }
+    this.saveSecret(m.id, s);
     await this.reload();
-    return { id: m.id, name: m.name, account: s.account };
+    return { id: m.id, name: m.name, account: account ?? s.account };
   }
 
-  async disconnect(id: string) {
+  /** Make one of a multi-account connector's accounts the default. */
+  async setDefaultAccount(id: string, account: string) {
     const m = this.manifest(id);
     const s = this.secret(id);
-    if (s.tokens && m.oauth?.revokeUrl) {
-      await fetch(mapUrl(m.oauth.revokeUrl), { method: "POST", body: new URLSearchParams({ token: s.tokens.refresh_token ?? s.tokens.access_token }), signal: AbortSignal.timeout(10_000) }).catch(() => {});
+    if (same(account, s.account)) return;
+    const o = s.others?.find((x) => same(x.account, account));
+    if (!o) throw new ConnectorError(`No ${m.name} account "${account}".`, 404);
+    const rest = s.others!.filter((x) => x !== o);
+    if (s.account || s.tokens) rest.unshift({ account: s.account ?? "Signed in", tokens: s.tokens });
+    s.account = o.account;
+    s.tokens = o.tokens;
+    s.others = rest;
+    this.saveSecret(id, s);
+    await this.reload();
+  }
+
+  /** Sign out. With an account, only that one (the next account becomes the default if it was it). */
+  async disconnect(id: string, account?: string) {
+    const m = this.manifest(id);
+    const s = this.secret(id);
+    const revoke = async (t?: Tokens) => {
+      if (t && m.oauth?.revokeUrl) {
+        await fetch(mapUrl(m.oauth.revokeUrl), { method: "POST", body: new URLSearchParams({ token: t.refresh_token ?? t.access_token }), signal: AbortSignal.timeout(10_000) }).catch(() => {});
+      }
+    };
+    if (account && !same(account, s.account)) {
+      const o = s.others?.find((x) => same(x.account, account));
+      if (!o) throw new ConnectorError(`No ${m.name} account "${account}".`, 404);
+      await revoke(o.tokens);
+      s.others = s.others!.filter((x) => x !== o);
+    } else if (account && s.others?.length) {
+      await revoke(s.tokens);
+      const [next, ...rest] = s.others;
+      s.account = next.account;
+      s.tokens = next.tokens;
+      s.others = rest;
+    } else {
+      await revoke(s.tokens);
+      for (const o of s.others ?? []) await revoke(o.tokens);
+      delete s.tokens;
+      delete s.account;
+      delete s.others;
     }
-    delete s.tokens;
-    delete s.account;
+    if (!s.others?.length) delete s.others;
     this.saveSecret(id, s);
     await this.reload();
   }
@@ -418,7 +534,52 @@ export class Connectors {
       if (!/^[a-z][a-z0-9_]{1,63}$/.test(t.name)) throw new Error(`Tool name "${t.name}" must be snake_case.`);
       if (!["auto", "ask", "deny"].includes(t.permission)) t.permission = "ask";
     }
-    return tools;
+    return m.multiAccount && m.auth === "oauth2" && !factory ? this.withAccounts(m, tools) : tools;
+  }
+
+  /**
+   * Give every tool of a multi-account connector an optional `account` argument. The tools are
+   * built once per account (with a runtime signed in as it) and the call goes to that copy.
+   * Read-only tools also take "all" to run once per account.
+   */
+  private withAccounts(m: ConnectorManifest, tools: Tool[]): Tool[] {
+    const all = this.accounts(m.id);
+    if (all.length < 2) return tools;
+    const factory = this.builtins.find((b) => b.manifest.id === m.id)?.factory;
+    const perAccount = new Map<string, Promise<Tool[]>>();
+    const toolsFor = (account: string) => {
+      if (!perAccount.has(account)) perAccount.set(account, (async () => ((await (factory ?? (await this.factoryFor(m)))({ z, defineTool }, this.runtime(m, account))) ?? { tools: [] }).tools ?? [])());
+      return perAccount.get(account)!;
+    };
+    const def = all[0];
+    return tools.map((t) => {
+      if (t.jsonSchema || !(t.schema instanceof z.ZodObject)) return t;
+      const readOnly = t.permission === "auto" && !t.needsApproval;
+      const accountArg = z
+        .string()
+        .optional()
+        .describe(`Which ${m.name} account to use: ${all.join(", ")}. Leave it out for the default (${def}).${readOnly ? ' "all" runs it for every account.' : ""}`);
+      const runOne = async (account: string | undefined, args: any, ctx: any) => {
+        if (!account) return t.run(args, ctx);
+        const copy = (await toolsFor(account)).find((x) => x.name === t.name);
+        if (!copy) throw new Error(`${t.name} isn't available for ${account}.`);
+        return copy.run(args, ctx);
+      };
+      return {
+        ...t,
+        schema: (t.schema as z.ZodObject<any>).extend({ account: accountArg }),
+        needsApproval: t.needsApproval ? ({ account: _a, ...args }: any, ctx: any) => t.needsApproval!(args, ctx) : undefined,
+        run: async ({ account, ...args }: any, ctx: any) => {
+          if (readOnly && account?.trim().toLowerCase() === "all") {
+            const names = this.accounts(m.id);
+            const out = await Promise.all(names.map(async (a, i) => `## ${a}\n${await runOne(i === 0 ? undefined : a, args, ctx).catch((e) => `Error: ${(e as Error).message}`)}`));
+            return out.join("\n\n");
+          }
+          const resolved = this.resolveAccount(m.id, account);
+          return runOne(resolved, args, ctx);
+        },
+      } as Tool;
+    });
   }
 
   /**

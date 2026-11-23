@@ -124,6 +124,99 @@ test("Google sign-in: PKCE code exchange, account name, token refresh, tools, di
   }
 });
 
+test("Google with several accounts: add, pick per call, search all, default, remove one", async () => {
+  // Each sign-in code maps to one account; each account has its own token and mailbox.
+  const accounts: Record<string, { email: string; token: string; subject: string }> = {
+    "code-home": { email: "ryan@home.com", token: "tok-home", subject: "Dinner" },
+    "code-work": { email: "ryan@work.com", token: "tok-work", subject: "Standup" },
+  };
+  const byToken = (auth: string) => Object.values(accounts).find((a) => auth === `Bearer ${a.token}`);
+  const api = await fakeApi((r) => {
+    if (r.url.startsWith("/token")) {
+      const a = accounts[new URLSearchParams(r.body).get("code")!];
+      return { json: { access_token: a.token, refresh_token: `rt-${a.token}`, expires_in: 3600 } };
+    }
+    if (r.url.startsWith("/revoke")) return { json: {} };
+    const who = byToken(r.auth);
+    if (!who) return { status: 401, json: { error: { message: "bad token" } } };
+    if (r.url.startsWith("/userinfo")) return { json: { email: who.email } };
+    if (r.url.startsWith("/gmail/gmail/v1/users/me/messages?")) return { json: { messages: [{ id: "m1" }] } };
+    if (r.url.startsWith("/gmail/gmail/v1/users/me/messages/m1")) return { json: { id: "m1", snippet: "", payload: { headers: [{ name: "Subject", value: who.subject }] } } };
+    if (r.url.startsWith("/gmail/gmail/v1/users/me/messages/send")) return { json: { id: `sent-${who.token}` } };
+    return { status: 404, json: { error: { message: `no route ${r.url}` } } };
+  });
+  process.env.SYPH_CONNECTOR_URL_MAP = JSON.stringify({
+    "https://oauth2.googleapis.com/token": `${api.base}/token`,
+    "https://oauth2.googleapis.com/revoke": `${api.base}/revoke`,
+    "https://openidconnect.googleapis.com/v1/userinfo": `${api.base}/userinfo`,
+    "https://gmail.googleapis.com": `${api.base}/gmail`,
+  });
+  const signIn = async (c: Connectors, code: string) => {
+    const url = new URL(c.startOAuth("google", "http://127.0.0.1:7337/"));
+    assert.match(url.searchParams.get("prompt")!, /select_account/, "Google shows the account chooser");
+    return c.finishOAuth(url.searchParams.get("state")!, code);
+  };
+  const tool = (c: Connectors, name: string) => c.tools().find((t) => t.name === name)!;
+  const run = (c: Connectors, name: string, args: any) => {
+    const t = tool(c, name);
+    return Promise.resolve(t.run(t.schema.parse(args), {} as any));
+  };
+  try {
+    const home = tempHome();
+    const c = new Connectors(home, [googleWorkspace]);
+    c.saveFields("google", { clientId: "cid.apps.googleusercontent.com", clientSecret: "shh" });
+    assert.equal((await signIn(c, "code-home")).account, "ryan@home.com");
+    // With one account, tools look exactly as before.
+    assert.equal(Object.keys((tool(c, "gmail_search").schema as any).shape).includes("account"), false);
+
+    assert.equal((await signIn(c, "code-work")).account, "ryan@work.com");
+    let g = c.list()[0];
+    assert.equal(g.account, "ryan@home.com", "the first account stays the default");
+    assert.deepEqual(g.accounts, [
+      { account: "ryan@home.com", default: true, signedIn: true },
+      { account: "ryan@work.com", default: false, signedIn: true },
+    ]);
+    // Signing in with an account that's already here refreshes it, never duplicates it.
+    await signIn(c, "code-work");
+    assert.equal(c.list()[0].accounts!.length, 2);
+
+    assert.match(await run(c, "gmail_search", { query: "" }), /Dinner/, "no account: the default mailbox");
+    assert.match(await run(c, "gmail_search", { query: "", account: "ryan@work.com" }), /Standup/);
+    assert.match(await run(c, "gmail_search", { query: "", account: "work" }), /Standup/, "a unique part of the address works");
+    await assert.rejects(run(c, "gmail_search", { query: "", account: "ryan" }), /more than one.*ryan@home.com, ryan@work.com/);
+    await assert.rejects(run(c, "gmail_search", { query: "", account: "nobody@x.com" }), /No Google Workspace account/);
+    const both = await run(c, "gmail_search", { query: "", account: "all" });
+    assert.match(both, /## ryan@home.com[\s\S]*Dinner[\s\S]*## ryan@work.com[\s\S]*Standup/);
+    await assert.rejects(run(c, "gmail_send", { to: "a@x.com", body: "hi", account: "all" }), /No Google Workspace account "all"/, "all is only for reading");
+    assert.match(await run(c, "gmail_send", { to: "a@x.com", body: "hi", account: "work" }), /sent-tok-work/);
+    // google_api keeps asking before changes, with the account argument set aside.
+    assert.equal(tool(c, "google_api").needsApproval!({ method: "GET", url: "https://x.googleapis.com", account: "work" } as any, {} as any), null);
+    assert.match(String(tool(c, "google_api").needsApproval!({ method: "POST", url: "https://x.googleapis.com", account: "work" } as any, {} as any)), /changes data/);
+
+    await c.setDefaultAccount("google", "ryan@work.com");
+    g = c.list()[0];
+    assert.equal(g.account, "ryan@work.com");
+    assert.match(await run(c, "gmail_search", { query: "" }), /Standup/, "the new default is used without an account");
+
+    // Removing the default promotes the next account; the tools drop the account argument.
+    await c.disconnect("google", "ryan@work.com");
+    g = c.list()[0];
+    assert.equal(g.state, "ready");
+    assert.equal(g.account, "ryan@home.com");
+    assert.equal(g.accounts!.length, 1);
+    assert.equal(Object.keys((tool(c, "gmail_search").schema as any).shape).includes("account"), false);
+    assert.ok(!JSON.stringify(c.list()).includes("tok-"), "tokens never reach the UI");
+
+    await signIn(c, "code-work");
+    await c.disconnect("google");
+    assert.equal(c.list()[0].state, "needs_signin");
+    assert.equal(c.list()[0].accounts, undefined);
+  } finally {
+    delete process.env.SYPH_CONNECTOR_URL_MAP;
+    await api.close();
+  }
+});
+
 test("harness exposes connector tools and tells the agent what's connected", async () => {
   const home = tempHome();
   const h = await new Harness(home).init({ mcp: false });
