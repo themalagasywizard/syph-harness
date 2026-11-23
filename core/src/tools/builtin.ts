@@ -69,7 +69,8 @@ export const readFile = defineTool({
     const to = Math.min(lines.length, endLine ?? (startLine ? lines.length : READ_DEFAULT_LINES));
     if (from > lines.length) return `Error: ${path} has only ${lines.length} lines; startLine ${from} is past the end.`;
     const part = lines.slice(from - 1, to).join("\n");
-    const whole = from === 1 && to === lines.length;
+    // A file that itself starts with "Error" gets a header, so it isn't mistaken for a failed call.
+    const whole = from === 1 && to === lines.length && !/^Error\b/.test(part);
     return truncate(whole ? part : `[${path}: lines ${from}-${to} of ${lines.length}${to < lines.length ? `; read more with startLine=${to + 1}` : ""}]\n${part}`, 40_000);
   },
 });

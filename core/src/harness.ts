@@ -148,7 +148,8 @@ export class Harness {
   tools(): ToolRegistry {
     const appTools = [...this.connectors.tools(), ...this.mcp.flatMap((m) => m.tools)];
     // Tools for apps and MCP servers are shown only once a chat asks for them (find_tools).
-    const lazy = this.home.config().agent.lazyTools ? appTools.map((t) => t.name) : [];
+    // GitHub stays loaded: the repo prompt tells the agent to use its tools directly.
+    const lazy = this.home.config().agent.lazyTools ? appTools.map((t) => t.name).filter((n) => !n.startsWith("github_")) : [];
     const reg: ToolRegistry = new ToolRegistry(
       [...builtinTools, updatePlanTool, ...longTaskTools, ...(lazy.length ? [findToolsTool((ctx) => reg.hidden(ctx))] : []), ...this.extTools, ...connectorAgentTools(this.connectors, () => this.broadcast({ type: "connectors" })), ...repoTools(this.repoHost), ...uiAgentTools(this.home, () => this.uiEnv()), ...appTools],
       this.home.config().toolPermissions ?? {},
