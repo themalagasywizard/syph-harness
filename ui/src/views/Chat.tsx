@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, AtSign, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, Clock, Code2, Copy, CornerDownRight, Files, Flag, FlaskConical, FolderClosed, Image as ImageIcon, Lightbulb, LayoutTemplate, ListChecks, Loader2, Moon, Paperclip, Pencil, RotateCcw, ShieldQuestion, Slash, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Wrench, X, Zap } from "lucide-react";
+import { ArrowUp, AtSign, Plus, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, Clock, Code2, Copy, CornerDownRight, Files, Flag, FlaskConical, FolderClosed, Image as ImageIcon, Lightbulb, LayoutTemplate, ListChecks, Loader2, Moon, Paperclip, Pencil, RotateCcw, ShieldQuestion, Slash, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Wrench, X, Zap } from "lucide-react";
 import { Markdown } from "../components/Markdown";
 import { Mark } from "../components/Logo";
 import { CellLoader } from "../components/CellLoader";
@@ -7,7 +7,7 @@ import { ModelPicker } from "../components/ModelPicker";
 import { useApp } from "../App";
 import { api, followChat, queueMessage, sendMessage, uploadAttachment, type AgentEvent, type Attachment, type Chat, type CheckResult, type FileRef, type PlanStep, type Progress, type Proposal, type RunStatus, type ToolCallView, type Turn } from "../api";
 import { ContractCard, EditDiff, QuestionCard, RecapLine, StatusLine, StopCard } from "../components/RunCards";
-import { ActiveRepoChip, RepoComposerMenu } from "../components/Repos";
+import { ActiveRepoChip, RepoComposerMenu, useOutside } from "../components/Repos";
 import { FileCard, FileIcon } from "../components/FilePreview";
 import { ExtIcon, Slot, type UiExtension } from "../ext";
 
@@ -252,6 +252,8 @@ function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, sta
       <div className="avatar">
         {streaming ? (
           <CellLoader size={30} state={approval ? "idle" : turn.content && !turn.toolCalls?.some((c) => c.ok === undefined) ? "streaming" : "loading"} />
+        ) : last ? (
+          <CellLoader size={30} state="idle" birth={false} />
         ) : (
           <Mark size={18} />
         )}
@@ -331,6 +333,9 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const [status, setStatus] = useState<RunStatus>();
   const [progress, setProgress] = useState<Progress>();
   const [contractOpen, setContractOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const imageInput = useRef<HTMLInputElement>(null);
+  const addRef = useOutside(addOpen, () => setAddOpen(false));
   const [liveChecks, setLiveChecks] = useState<CheckResult[]>();
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(0);
@@ -615,7 +620,6 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
           )}
         </div>
         <ActiveRepoChip chatId={cid} projectId={projectId} />
-        <RepoComposerMenu chatId={cid} projectId={projectId} ensureChat={ensureChat} iconOnly />
         <button className={`pill yolo ${yolo ? "on" : ""}`} onClick={toggleYolo} title={yolo ? "YOLO is on: shell (PowerShell) and other ask-first tools run without asking. Click to turn off." : "Turn on YOLO: run shell (PowerShell) and other ask-first tools without asking."}>
           <Zap size={15} fill={yolo ? "currentColor" : "none"} /> <span className="yolo-text">{yolo ? "YOLO on" : "Ask first"}</span>
         </button>
@@ -758,8 +762,18 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             }}
           />
           <div className="composer-row">
-            <button className="icon-btn sm attach" onClick={() => fileInput.current?.click()} aria-label="Attach files" title="Attach files (or drop or paste them)"><Paperclip size={16} /></button>
+            <div className="model-menu" ref={addRef}>
+              <button className={`icon-btn sm attach ${addOpen ? "on" : ""}`} onClick={() => setAddOpen((o) => !o)} aria-label="Add images or files" aria-expanded={addOpen} title="Add images or files (or drop or paste them)"><Plus size={18} /></button>
+              {addOpen && (
+                <div className="menu add-menu" style={{ left: 0 }}>
+                  <button onClick={() => { setAddOpen(false); imageInput.current?.click(); }}><ImageIcon size={16} /> Images</button>
+                  <button onClick={() => { setAddOpen(false); fileInput.current?.click(); }}><Paperclip size={16} /> Files <span className="id">PDF, docs, sheets, code…</span></button>
+                </div>
+              )}
+            </div>
+            <input ref={imageInput} type="file" accept="image/*" multiple hidden onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ""; }} />
             <input ref={fileInput} type="file" multiple hidden onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ""; }} />
+            <RepoComposerMenu chatId={cid} projectId={projectId} ensureChat={ensureChat} iconOnly />
             <Slot name="chat.composer" ctx={slotCtx} />
             <div className="spacer" />
             <ModelPicker value={model} onChange={setModel} />

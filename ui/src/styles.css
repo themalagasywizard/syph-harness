@@ -110,7 +110,7 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 .msg.user .bubble { background: var(--surface-2); padding: 12px 18px; border-radius: 20px 4px 20px 20px; max-width: 75%; }
 .msg.assistant { display: grid; grid-template-columns: 32px 1fr; gap: 16px; }
 .avatar { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); }
-.avatar { background: transparent; border: 1px solid var(--border); color: var(--text); }
+.avatar { background: transparent; border: 0; color: var(--text); }
 .msg .body { min-width: 0; padding-top: 4px; }
 .msg .body p { margin: 0 0 12px; }
 .msg .body ol, .msg .body ul { margin: 0 0 12px; padding-left: 22px; }
@@ -674,3 +674,7 @@ textarea.input { resize: vertical; min-height: 96px; line-height: 1.55; }
 .gh-btn .gh-dot { position: absolute; right: 5px; bottom: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--good, #2ea043); box-shadow: 0 0 0 2px var(--bg); }
 .topbar .pill-label { max-width: 160px; }
 @media (max-width: 720px) { .topbar .pill-label { max-width: 90px; } .topbar .pill.yolo .yolo-text { display: none; } }
+
+.icon-btn.attach.on { background: var(--surface-3); }
+.add-menu { min-width: 240px; }
+.gh-btn .gh-dot { right: 3px; bottom: 3px; }

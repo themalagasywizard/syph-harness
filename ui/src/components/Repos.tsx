@@ -173,8 +173,8 @@ export function RepoComposerMenu({ chatId, projectId, ensureChat, iconOnly }: { 
   return (
     <div className="model-menu" ref={ref}>
       {iconOnly ? (
-        <button className={`icon-btn gh-btn ${gh?.connected ? "connected" : ""} ${open ? "on" : ""}`} onClick={() => setOpen((o) => !o)} aria-label="Repositories" title={gh?.connected ? `GitHub connected${gh.account ? ` as ${gh.account}` : ""}. Repositories for this chat` : "Link a repository or connect GitHub"}>
-          <Github size={19} />
+        <button className={`icon-btn sm gh-btn ${gh?.connected ? "connected" : ""} ${open ? "on" : ""}`} onClick={() => setOpen((o) => !o)} aria-label="Repositories" title={gh?.connected ? `GitHub connected${gh.account ? ` as ${gh.account}` : ""}. Repositories for this chat` : "Link a repository or connect GitHub"}>
+          <Github size={17} />
           {gh?.connected && <span className="gh-dot" />}
         </button>
       ) : (
@@ -183,7 +183,7 @@ export function RepoComposerMenu({ chatId, projectId, ensureChat, iconOnly }: { 
         </button>
       )}
       {open && (
-        <div className="menu repo-menu" style={iconOnly ? { right: 0, left: "auto", top: 40, bottom: "auto" } : { left: 0 }}>
+        <div className="menu repo-menu" style={{ left: 0 }}>
           {!!repos.length && <div className="grp">Working on</div>}
           {repos.map((r) => (
             <div key={r.path} className={`repo-item ${r.active ? "active" : ""}`}>
