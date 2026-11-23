@@ -17,7 +17,7 @@ export type View =
   | { kind: "projects"; projectId?: string }
   | { kind: "tasks" }
   | { kind: "evolve" }
-  | { kind: "settings" }
+  | { kind: "settings"; section?: string; item?: string }
   | { kind: "connectors" };
 
 interface Ctx {
@@ -43,7 +43,8 @@ function readHash(): View {
   const q = new URLSearchParams(query ?? "");
   if (kind === "projects") return { kind, projectId: id };
   if (kind === "page") return { kind, ext: id ?? "", id: path.split("/")[2] ?? "" };
-  if (kind === "tasks" || kind === "evolve" || kind === "settings" || kind === "connectors") return { kind };
+  if (kind === "settings") return { kind, section: id, item: q.get("item") ?? undefined };
+  if (kind === "tasks" || kind === "evolve" || kind === "connectors") return { kind };
   return { kind: "chat", chatId: id, projectId: q.get("project") ?? undefined, draft: q.get("draft") ?? undefined, send: q.get("send") === "1" };
 }
 
@@ -113,11 +114,12 @@ export default function App() {
       location.hash = `/page/${v.ext}/${v.id}`;
       return;
     }
-    const id = v.kind === "chat" ? v.chatId : v.kind === "projects" ? v.projectId : undefined;
+    const id = v.kind === "chat" ? v.chatId : v.kind === "projects" ? v.projectId : v.kind === "settings" ? v.section : undefined;
     const params = new URLSearchParams();
     if (v.kind === "chat" && !v.chatId && v.projectId) params.set("project", v.projectId);
     if (v.kind === "chat" && !v.chatId && v.draft) params.set("draft", v.draft);
     if (v.kind === "chat" && !v.chatId && v.draft && v.send) params.set("send", "1");
+    if (v.kind === "settings" && v.item) params.set("item", v.item);
     const q = params.size ? `?${params}` : "";
     location.hash = `/${v.kind}${id ? "/" + id : ""}${q}`;
   };
@@ -142,7 +144,7 @@ export default function App() {
               {view.kind === "projects" && <ProjectsView projectId={view.projectId} />}
               {view.kind === "tasks" && <TasksView />}
               {view.kind === "evolve" && <EvolveView />}
-              {view.kind === "settings" && <SettingsView />}
+              {view.kind === "settings" && <SettingsView key={`${view.section ?? ""}/${view.item ?? ""}`} section={view.section} item={view.item} />}
               {view.kind === "connectors" && <ConnectorsView />}
             </>
           )}

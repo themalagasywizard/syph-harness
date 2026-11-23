@@ -27,8 +27,8 @@ export function InterfaceSettings() {
   };
   return (
     <>
-      <div className="section-label" style={{ paddingLeft: 0 }}>Interface</div>
-      <div className="list" style={{ marginBottom: 32 }}>
+      <div className="section-label set-sub">Interface changes Syph made</div>
+      <div className="list">
         <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
           <div style={{ minWidth: 0 }}>
             <div className="name">Safe mode</div>

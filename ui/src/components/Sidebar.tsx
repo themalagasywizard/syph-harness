@@ -1,13 +1,49 @@
-import { Clock, Dna, FolderClosed, Menu, Plug, Plus, Settings, Smartphone, Trash2 } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
+import { Clock, Dna, FolderClosed, Menu, Plug, Plus, Search, Settings, Smartphone, Trash2 } from "lucide-react";
 import { useApp, type View } from "../App";
 import { api } from "../api";
 import { Mark, Wordmark } from "./Logo";
 import { ExtIcon, Slot, useSidebarPages } from "../ext";
 import { shell } from "./TitleBar";
+import { SearchBox, SearchResults, useSearchResults, useSearchShortcut, type SearchResult } from "./Search";
 
 export function Sidebar({ view, collapsed, toggle }: { view: View; collapsed: boolean; toggle: () => void }) {
   const { state, go, refresh } = useApp();
   const pages = useSidebarPages();
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { results, ws, searching } = useSearchResults(query);
+  const focusSearch = useCallback(() => {
+    if (!collapsed) return inputRef.current?.select();
+    toggle();
+    setTimeout(() => inputRef.current?.focus(), 220);
+  }, [collapsed, toggle]);
+  useSearchShortcut(focusSearch);
+  const changeQuery = (q: string) => {
+    setQuery(q);
+    setActive(0);
+  };
+  const openResult = (r: SearchResult) => {
+    go(r.view);
+    changeQuery("");
+    inputRef.current?.blur();
+  };
+  const onSearchKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      changeQuery("");
+      inputRef.current?.blur();
+    } else if (e.key === "ArrowDown" && results.length) {
+      e.preventDefault();
+      setActive((active + 1) % results.length);
+    } else if (e.key === "ArrowUp" && results.length) {
+      e.preventDefault();
+      setActive((active - 1 + results.length) % results.length);
+    } else if (e.key === "Enter" && results[active]) {
+      openResult(results[active]);
+    }
+  };
+  const searching_ = !collapsed && !!ws.length;
   const chats = state?.chats ?? [];
   const colorOf = (id?: string) => state?.projects.find((p) => p.id === id)?.color ?? "var(--faint)";
   const item = (active: boolean, onClick: () => void, icon: React.ReactNode, label: string, badge?: number) => (
@@ -37,6 +73,16 @@ export function Sidebar({ view, collapsed, toggle }: { view: View; collapsed: bo
         {!collapsed && <span>New chat</span>}
       </button>
 
+      {collapsed ? (
+        <button className="new-chat side-search-icon" onClick={focusSearch} title="Search (Ctrl K)" aria-label="Search"><Search size={18} /></button>
+      ) : (
+        <SearchBox query={query} setQuery={changeQuery} inputRef={inputRef} onKeyDown={onSearchKey} />
+      )}
+
+      {searching_ && <SearchResults results={results} ws={ws} active={active} setActive={setActive} open={openResult} searching={searching} />}
+
+      <div className="side-main" hidden={searching_}>
+
       <nav className="nav">
         {item(view.kind === "projects", () => go({ kind: "projects" }), <FolderClosed size={18} />, "Projects")}
         {item(view.kind === "tasks", () => go({ kind: "tasks" }), <Clock size={18} />, "Tasks")}
@@ -58,7 +104,7 @@ export function Sidebar({ view, collapsed, toggle }: { view: View; collapsed: bo
           </div>
         ))}
       </div>
-      {collapsed && <div style={{ flex: 1 }} />}
+      </div>
 
       <div className="sidebar-foot nav">
         {item(false, () => go({ kind: "settings" }), <Smartphone size={18} />, "Connect phone")}

@@ -315,3 +315,16 @@ test("each model uses its full context window unless the user set a limit", asyn
     srv.close();
   }
 });
+
+test("chat search matches titles and message text, newest first", () => {
+  const home = tempHome();
+  const a = store.createChat(home, { title: "Newsletter recap" });
+  const b = store.createChat(home, { title: "Fix the build" });
+  store.saveChat(home, { ...store.getChat(home, b.id)!, turns: [{ id: "t1", role: "user", content: "Why does the weekly newsletter fail to send on Mondays?", createdAt: new Date().toISOString() }] });
+  const hits = store.searchChats(home, "newsletter");
+  assert.deepEqual(hits.map((h) => h.id).sort(), [a.id, b.id].sort());
+  assert.equal(hits.find((h) => h.id === a.id)?.snippet, undefined);
+  assert.match(hits.find((h) => h.id === b.id)?.snippet ?? "", /weekly newsletter fail/);
+  assert.deepEqual(store.searchChats(home, "newsletter mondays").map((h) => h.id), [b.id]);
+  assert.deepEqual(store.searchChats(home, "  "), []);
+});
