@@ -4,6 +4,7 @@ import { ChatView } from "./views/Chat";
 import { ProjectsView } from "./views/Projects";
 import { TasksView } from "./views/Tasks";
 import { EvolveView } from "./views/Evolve";
+import { SkillsView } from "./views/Skills";
 import { SettingsView } from "./views/Settings";
 import { ConnectorsView } from "./views/Connectors";
 import { api, subscribe, type AppState, type Job } from "./api";
@@ -17,6 +18,7 @@ export type View =
   | { kind: "projects"; projectId?: string }
   | { kind: "tasks" }
   | { kind: "evolve" }
+  | { kind: "skills"; name?: string }
   | { kind: "settings"; section?: string; item?: string }
   | { kind: "connectors" };
 
@@ -43,6 +45,7 @@ function readHash(): View {
   const q = new URLSearchParams(query ?? "");
   if (kind === "projects") return { kind, projectId: id };
   if (kind === "page") return { kind, ext: id ?? "", id: path.split("/")[2] ?? "" };
+  if (kind === "skills") return { kind, name: id ? decodeURIComponent(id) : undefined };
   if (kind === "settings") return { kind, section: id, item: q.get("item") ?? undefined };
   if (kind === "tasks" || kind === "evolve" || kind === "connectors") return { kind };
   return { kind: "chat", chatId: id, projectId: q.get("project") ?? undefined, draft: q.get("draft") ?? undefined, send: q.get("send") === "1" };
@@ -114,7 +117,7 @@ export default function App() {
       location.hash = `/page/${v.ext}/${v.id}`;
       return;
     }
-    const id = v.kind === "chat" ? v.chatId : v.kind === "projects" ? v.projectId : v.kind === "settings" ? v.section : undefined;
+    const id = v.kind === "chat" ? v.chatId : v.kind === "projects" ? v.projectId : v.kind === "settings" ? v.section : v.kind === "skills" ? v.name : undefined;
     const params = new URLSearchParams();
     if (v.kind === "chat" && !v.chatId && v.projectId) params.set("project", v.projectId);
     if (v.kind === "chat" && !v.chatId && v.draft) params.set("draft", v.draft);
@@ -144,6 +147,7 @@ export default function App() {
               {view.kind === "projects" && <ProjectsView projectId={view.projectId} />}
               {view.kind === "tasks" && <TasksView />}
               {view.kind === "evolve" && <EvolveView />}
+              {view.kind === "skills" && <SkillsView name={view.name} />}
               {view.kind === "settings" && <SettingsView key={`${view.section ?? ""}/${view.item ?? ""}`} section={view.section} item={view.item} />}
               {view.kind === "connectors" && <ConnectorsView />}
             </>

@@ -1,10 +1,12 @@
 // Proposals are the only way Syph changes itself. Each one records the full before/after of every
 // file it touches, so accepting is a write and rolling back is the reverse write.
 import { createTwoFilesPatch } from "diff";
-import { existsSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
+import { dirname } from "node:path";
 import type { Home } from "../home.ts";
 import type { FileChange, Proposal, ProposalKind } from "../types.ts";
 import { id, now, readJson, writeJson } from "../util.ts";
+import { redirectDuplicateSkills } from "../skills.ts";
 
 export interface ProposalInput {
   kind: ProposalKind;
@@ -26,7 +28,15 @@ export function kindForPath(path: string): ProposalKind {
 
 export function createProposal(home: Home, input: ProposalInput): Proposal {
   if (!input.files.length) throw new Error("A proposal must change at least one file.");
-  const changes: FileChange[] = input.files.map((f) => {
+  let files = input.files;
+  let reason = input.reason;
+  // Rewrites replace the skill they fix instead of stacking a near-copy beside it.
+  if (input.source === "reflector") {
+    const r = redirectDuplicateSkills(home, files.map((f) => ({ ...f, path: home.rel(f.path) })));
+    files = r.files;
+    if (r.notes.length) reason = `${reason} ${r.notes.join(" ")}`.trim();
+  }
+  const changes: FileChange[] = files.map((f) => {
     const path = home.rel(f.path);
     if (!home.isEvolvable(path)) throw new Error(`"${path}" is protected or not an editable Syph file.`);
     return { path, before: home.read(path), after: f.content };
@@ -36,7 +46,7 @@ export function createProposal(home: Home, input: ProposalInput): Proposal {
     id: id("pr_"),
     kind: input.kind,
     title: input.title,
-    reason: input.reason,
+    reason,
     changes,
     diff: diffOf(changes),
     source: input.source,
@@ -80,7 +90,19 @@ export function applyChanges(home: Home, changes: FileChange[], direction: "forw
     const content = direction === "forward" ? c.after : c.before;
     if (content === null) {
       if (home.exists(c.path)) unlinkSync(home.path(c.path));
+      pruneEmptyDirs(home, c.path);
     } else home.write(c.path, content);
+  }
+}
+
+/** After deleting a file, remove folders it leaves empty (e.g. a deleted skill's folder), up to the top-level folder. */
+function pruneEmptyDirs(home: Home, path: string) {
+  let dir = dirname(path);
+  while (dir.includes("/")) {
+    const abs = home.path(dir);
+    if (!existsSync(abs) || readdirSync(abs).length) return;
+    rmdirSync(abs);
+    dir = dirname(dir);
   }
 }
 
@@ -95,6 +117,17 @@ export function acceptProposal(home: Home, pid: string, note?: string): Proposal
   save(home, p);
   writeJson(home.path("history", `${p.decidedAt.replace(/[:.]/g, "-")}_${p.id}.json`), { action: "accept", proposal: p.id, title: p.title, changes: p.changes.map((c) => c.path) });
   return p;
+}
+
+/** A change the user made by hand (e.g. on the Skills page): recorded and applied at once, so it can be rolled back from Evolve. */
+export function commitUserChange(home: Home, input: Omit<ProposalInput, "source">): Proposal {
+  const p = createProposal(home, { ...input, source: "user" });
+  try {
+    return acceptProposal(home, p.id, "Made by you.");
+  } catch (e) {
+    rejectProposal(home, p.id, (e as Error).message);
+    throw e;
+  }
 }
 
 export function rejectProposal(home: Home, pid: string, note?: string): Proposal {

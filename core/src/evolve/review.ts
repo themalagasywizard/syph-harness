@@ -5,7 +5,7 @@ import type { Home } from "../home.ts";
 import { complete } from "../providers/llm.ts";
 import type { Proposal, ProposalKind, Turn } from "../types.ts";
 import { extractJson } from "../util.ts";
-import { HARNESS_LENS } from "./engine.ts";
+import { HARNESS_LENS, SKILL_RULES } from "./engine.ts";
 import { createProposal, kindForPath, listProposals } from "./proposals.ts";
 import { listSkills } from "../skills.ts";
 
@@ -44,7 +44,8 @@ export interface ReviewInput {
 export async function reviewRun(home: Home, input: ReviewInput): Promise<{ proposal: Proposal | null; diagnosis: string }> {
   const calls = (input.turn.toolCalls ?? []).map((c, i) => `${i + 1}. ${c.ok === false ? "FAILED " : ""}${c.name} ${JSON.stringify(c.args ?? {}).slice(0, 400)}\n   → ${(c.result ?? "").replace(/\s+/g, " ").slice(0, c.ok === false ? 600 : 200)}`).join("\n");
   const prompt = home.read("prompts/system.md") ?? "";
-  const skills = listSkills(home).map((s) => `- ${s.name}: ${s.description}`).join("\n");
+  // Full text of each active skill, so a fix can rewrite the one that failed rather than add another.
+  const skills = listSkills(home).map((s) => `<file path="${s.path}">\n${(home.read(s.path) ?? "").slice(0, 3000)}\n</file>`).join("\n");
   const past = listProposals(home).slice(0, 8).map((p) => `- [${p.status}] ${p.title}`).join("\n");
   const cfg = home.config();
   const res = await complete(home, {
@@ -53,7 +54,7 @@ export async function reviewRun(home: Home, input: ReviewInput): Promise<{ propo
     temperature: 0.3,
     jsonMode: true,
     messages: [
-      { role: "system", content: `${REVIEWER}\n\n${HARNESS_LENS}` },
+      { role: "system", content: `${REVIEWER}\n\n${HARNESS_LENS}\n\n${SKILL_RULES}` },
       {
         role: "user",
         content: [
@@ -62,16 +63,17 @@ export async function reviewRun(home: Home, input: ReviewInput): Promise<{ propo
           `# Tool calls (${(input.turn.toolCalls ?? []).length}, ${mistakes(input.turn).length} failed)\n${calls.slice(0, 20_000)}`,
           `# Final answer\n${input.turn.content.slice(0, 2000)}`,
           `# Current system prompt\n<file path="prompts/system.md">\n${prompt}\n</file>`,
-          skills ? `# Skills\n${skills}` : "",
+          skills ? `# Current skills (rewrite one of these at its path rather than adding a near-copy)\n${skills}` : "",
           past ? `# Recent proposals (don't repeat one)\n${past}` : "",
         ].filter(Boolean).join("\n\n"),
       },
     ],
   });
-  const out = extractJson<{ none?: boolean; diagnosis?: string; question?: string; kind?: ProposalKind; title?: string; reason?: string; files?: { path: string; content: string }[] }>(res.content);
+  const out = extractJson<{ none?: boolean; diagnosis?: string; question?: string; kind?: ProposalKind; title?: string; reason?: string; files?: { path: string; content: string | null }[] }>(res.content);
   if (!out) return { proposal: null, diagnosis: "The review didn't produce a usable answer." };
   if (out.none || !out.files?.length) return { proposal: null, diagnosis: out.diagnosis ?? "No change to Syph would help." };
-  const files = out.files.filter((f) => typeof f?.path === "string" && typeof f.content === "string" && home.isEvolvable(f.path));
+  // content null deletes a file; only allowed for skills (e.g. one the fix makes redundant).
+  const files = out.files.filter((f) => typeof f?.path === "string" && (typeof f.content === "string" || (f.content === null && /^skills\//.test(f.path) && home.exists(f.path))) && home.isEvolvable(f.path));
   if (!files.length) return { proposal: null, diagnosis: `${out.diagnosis ?? ""} (The suggested change touched files Syph may not edit.)`.trim() };
   const proposal = createProposal(home, {
     kind: out.kind && ["skill", "extension", "prompt", "memory", "profile"].includes(out.kind) ? out.kind : kindForPath(files[0].path),

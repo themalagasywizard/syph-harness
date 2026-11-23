@@ -236,6 +236,28 @@ export interface Proposal {
   decidedAt?: string;
 }
 
+export interface SkillInfo {
+  name: string;
+  description: string;
+  path: string;
+  dir: string;
+  active: boolean;
+  body: string;
+  files: string[];
+  usage: { uses: number; lastUsed?: string };
+  changedAt?: string;
+  pending: { id: string; title: string }[];
+  versions: number;
+  createdBy?: "agent" | "reflector" | "user" | "default";
+}
+
+export interface SkillAudit {
+  duplicates: { skills: string[]; similarity: number }[];
+  unused: { name: string; ageDays: number }[];
+  inactive: string[];
+  empty: string[];
+}
+
 export interface Job {
   id: string;
   kind: string;

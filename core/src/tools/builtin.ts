@@ -2,7 +2,8 @@ import { exec, execFile } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
-import { listSkills, readSkill, skillFile } from "../skills.ts";
+import { auditSkills, findSkill, listSkills, readSkill, recordSkillUse, SKILL_NAME, skillFile, skillFiles, skillInfos, skillProposal, type SkillAction } from "../skills.ts";
+import { listProposals } from "../evolve/proposals.ts";
 import { headTail, truncate } from "../util.ts";
 import { scopeViolation } from "../scope.ts";
 import { defineTool, type Tool, type ToolContext } from "./types.ts";
@@ -200,22 +201,84 @@ export const readSkillTool = defineTool({
   description: "Load the full instructions of a skill listed in the system prompt.",
   schema: z.object({ name: z.string() }),
   permission: "auto",
-  run: ({ name }, ctx) => readSkill(ctx.home, name) ?? `No skill named "${name}". Available: ${listSkills(ctx.home).map((s) => s.name).join(", ")}`,
+  run: ({ name }, ctx) => {
+    const text = readSkill(ctx.home, name);
+    if (text === null) {
+      const off = findSkill(ctx.home, name, { includeInactive: true });
+      return off ? `The skill "${off.name}" is switched off. Work without it, or propose turning it back on with propose_skill_changes.` : `No skill named "${name}". Available: ${listSkills(ctx.home).map((s) => s.name).join(", ")}`;
+    }
+    recordSkillUse(ctx.home, findSkill(ctx.home, name)?.name ?? name);
+    return text;
+  },
 });
 
 export const proposeSkill = defineTool({
   name: "propose_skill",
-  description: "Propose a new reusable skill (or a rewrite of an existing one). The user approves it in Evolve before it is used.",
+  description: "Propose a new reusable skill, or a rewrite of an existing one (pass its exact name to rewrite it in place; never add a second skill for the same job). Use `replaces` to merge: the named skills are deleted in the same change. The user approves it in Evolve before it is used.",
   schema: z.object({
-    name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "kebab-case"),
+    name: z.string().regex(SKILL_NAME, "kebab-case"),
     description: z.string().describe("One line: when to use this skill."),
     body: z.string().describe("Numbered steps a capable model can follow."),
     reason: z.string().describe("Why this skill is worth having."),
+    replaces: z.array(z.string()).optional().describe("Existing skills this one makes redundant (merged into it). They are deleted when the user accepts."),
   }),
   permission: "auto",
-  run: ({ name, description, body, reason }, ctx) => {
-    const p = ctx.propose({ kind: "skill", title: `${ctx.home.exists(`skills/${name}/SKILL.md`) ? "Update" : "Add"} skill ${name}`, reason, files: [{ path: `skills/${name}/SKILL.md`, content: skillFile(name, description, body) }], source: "agent" });
-    return `Proposed skill "${name}" (${p.id}). It waits for the user's approval in Evolve.`;
+  run: ({ name, description, body, reason, replaces }, ctx) => {
+    const existing = findSkill(ctx.home, name, { includeInactive: true });
+    const path = existing?.path ?? `skills/${name}/SKILL.md`;
+    const gone = [...new Set((replaces ?? []).filter((r) => r !== name && r !== existing?.dir))];
+    const missing = gone.filter((r) => !findSkill(ctx.home, r, { includeInactive: true }));
+    if (missing.length) return `No skill named ${missing.map((m) => `"${m}"`).join(", ")}. Call list_skills to see the exact names.`;
+    const files = [{ path, content: skillFile(existing?.name ?? name, description, body) }, ...gone.flatMap((r) => skillFiles(ctx.home, findSkill(ctx.home, r, { includeInactive: true })!.dir).map((p) => ({ path: p, content: null })))];
+    const title = gone.length ? `Merge ${gone.join(", ")} into skill ${name}` : `${existing ? "Update" : "Add"} skill ${name}`;
+    const p = ctx.propose({ kind: "skill", title, reason, files, source: "agent" });
+    return `Proposed ${gone.length ? "merging into" : "skill"} "${name}" (${p.id}). It waits for the user's approval in Evolve.`;
+  },
+});
+
+export const listSkillsTool = defineTool({
+  name: "list_skills",
+  description: "List every skill (including switched-off ones) with how often each was used, plus a first pass at likely duplicates, unused and empty skills. Use it when asked to tidy, review or prune skills, then read the suspects with read_file (skills/<name>/SKILL.md) before proposing anything.",
+  schema: z.object({}),
+  permission: "auto",
+  run: (_args, ctx) => {
+    const infos = skillInfos(ctx.home, listProposals(ctx.home));
+    if (!infos.length) return "There are no skills yet.";
+    const audit = auditSkills(ctx.home, infos);
+    const rows = infos.map((s) => `- ${s.name}${s.active ? "" : " [off]"}: ${s.description || "(no description)"} — used ${s.usage.uses}×${s.usage.lastUsed ? `, last ${s.usage.lastUsed.slice(0, 10)}` : ""}; ${s.versions} version${s.versions === 1 ? "" : "s"}${s.pending.length ? `; change waiting in Evolve (${s.pending.map((p) => p.id).join(", ")})` : ""}; ${s.path}`);
+    const flags = [
+      audit.duplicates.length ? `Likely duplicates (word overlap, check them yourself):\n${audit.duplicates.map((d) => `- ${d.skills.join(" + ")} (${Math.round(d.similarity * 100)}% alike)`).join("\n")}` : "No obvious duplicates by word overlap. Still read skills that cover nearby jobs: two skills can contradict each other with different words.",
+      audit.unused.length ? `Never used:\n${audit.unused.map((u) => `- ${u.name} (${u.ageDays} days old)`).join("\n")}` : "",
+      audit.empty.length ? `Too thin to help:\n${audit.empty.map((n) => `- ${n}`).join("\n")}` : "",
+    ].filter(Boolean);
+    return `${infos.length} skills (${infos.filter((s) => s.active).length} on).\n${rows.join("\n")}\n\n${flags.join("\n\n")}\n\nTo clean up: propose_skill with \`replaces\` to merge duplicates into one, or propose_skill_changes to edit, switch off or delete. Everything waits for the user in Evolve.`;
+  },
+});
+
+const skillActionSchema = z.object({
+  action: z.enum(["edit", "deactivate", "activate", "delete"]),
+  name: z.string().describe("Exact skill name from list_skills."),
+  description: z.string().optional().describe("edit only: the new one-line description."),
+  body: z.string().optional().describe("edit only: the full new instructions (replaces the old body)."),
+});
+
+export const proposeSkillChanges = defineTool({
+  name: "propose_skill_changes",
+  description: "Propose editing, switching off (deactivate), switching back on (activate) or deleting one or more skills, as ONE change the user approves in Evolve. Prefer deactivate when unsure whether a skill still helps; delete duplicates and skills that contradict a better one.",
+  schema: z.object({
+    changes: z.array(skillActionSchema).min(1),
+    reason: z.string().describe("Why: e.g. which skills duplicate or contradict each other, or why one is not useful."),
+  }),
+  permission: "auto",
+  run: ({ changes, reason }, ctx) => {
+    let input;
+    try {
+      input = skillProposal(ctx.home, changes as SkillAction[], reason, "agent");
+    } catch (e) {
+      return `${(e as Error).message} Call list_skills to see the exact names and states.`;
+    }
+    const p = ctx.propose(input);
+    return `Proposed "${p.title}" (${p.id}). Nothing changes until the user accepts it in Evolve.`;
   },
 });
 
@@ -254,4 +317,4 @@ export const subagent = defineTool({
   run: async ({ prompt }, ctx) => (ctx.hooks.runSubagent ? ctx.hooks.runSubagent(prompt) : "Sub-agents are not available here."),
 });
 
-export const builtinTools: Tool[] = [listFiles, readFile, writeFile, editFile, searchFiles, shell, webFetch, readSkillTool, proposeSkill, proposeMemory, createTaskTool, subagent] as Tool[];
+export const builtinTools: Tool[] = [listFiles, readFile, writeFile, editFile, searchFiles, shell, webFetch, readSkillTool, listSkillsTool, proposeSkill, proposeSkillChanges, proposeMemory, createTaskTool, subagent] as Tool[];
