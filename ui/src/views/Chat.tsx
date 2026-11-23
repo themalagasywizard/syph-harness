@@ -229,7 +229,7 @@ interface Approval {
 
 type Answer = boolean | "always";
 
-function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, startedAt, status, last, busy, onSend, onRetry }: { turn: Turn; chatId?: string; streaming?: boolean; approval?: Approval | null; onApprove?: (allow: Answer) => void; note?: string; startedAt?: number; status?: RunStatus; last?: boolean; busy?: boolean; onSend?: (text: string) => void; onRetry?: () => void }) {
+function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, startedAt, status, last, settle, busy, onSend, onRetry }: { turn: Turn; chatId?: string; streaming?: boolean; approval?: Approval | null; onApprove?: (allow: Answer) => void; note?: string; startedAt?: number; status?: RunStatus; last?: boolean; settle?: boolean; busy?: boolean; onSend?: (text: string) => void; onRetry?: () => void }) {
   const elapsed = useElapsed(streaming ? startedAt : undefined);
   const running = streaming ? turn.toolCalls?.find((c) => c.ok === undefined) : undefined;
   const [rating, setRating] = useState(turn.rating);
@@ -251,9 +251,9 @@ function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, sta
     <div className="msg assistant">
       <div className="avatar">
         {streaming ? (
-          <CellLoader size={30} state={approval ? "idle" : turn.content && !turn.toolCalls?.some((c) => c.ok === undefined) ? "streaming" : "loading"} />
+          <CellLoader size={30} beat={turn.content.length} state={approval ? "idle" : turn.content && !turn.toolCalls?.some((c) => c.ok === undefined) ? "streaming" : "loading"} />
         ) : last ? (
-          <CellLoader size={30} state="idle" birth={false} />
+          <CellLoader size={30} state="idle" birth={false} settle={settle} />
         ) : (
           <Mark size={18} />
         )}
@@ -325,6 +325,13 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const [projectId, setProjectId] = useState<string | undefined>(initialProject);
   const [menu, setMenu] = useState(false);
   const [live, setLive] = useState<Turn | null>(null);
+  /** When a reply has just finished, its logo springs back into shape instead of appearing still. */
+  const [settling, setSettling] = useState(false);
+  useEffect(() => {
+    if (!settling) return;
+    const id = setTimeout(() => setSettling(false), 2500);
+    return () => clearTimeout(id);
+  }, [settling]);
   const [liveStart, setLiveStart] = useState<number>();
   const [note, setNote] = useState<string>();
   const [approval, setApproval] = useState<Approval | null>(null);
@@ -410,7 +417,9 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
     setApproval(null);
     setStatus(undefined);
     setLiveChecks(undefined);
+    let wrote = false;
     const onEvent = (e: AgentEvent) => {
+      if (e.type === "token") wrote = true;
       setLive((t) => {
         if (!t) return t;
         switch (e.type) {
@@ -452,6 +461,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
       setProgress(fresh.progress);
     }
     setLive(null);
+    setSettling(wrote);
     setStatus(undefined);
     setQueued([]);
     setPendingUser(null);
@@ -683,7 +693,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
                     </div>
                   </div>
                 ) : (
-                  <AssistantTurn key={t.id} turn={t} chatId={chat?.id} last={i === lastAssistant && i > lastUserIdx} busy={!!live} onSend={(m) => send(m)} onRetry={retry} />
+                  <AssistantTurn key={t.id} turn={t} chatId={chat?.id} last={i === lastAssistant && i > lastUserIdx} settle={settling && i === lastAssistant} busy={!!live} onSend={(m) => send(m)} onRetry={retry} />
                 ),
               )}
               {live && <AssistantTurn turn={live} streaming approval={approval} onApprove={answer} note={note} startedAt={liveStart} status={status} />}
