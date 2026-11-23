@@ -640,7 +640,7 @@ export class Harness {
         const r = await complete(this.home, { model, messages: [{ role: "system", content: "Summarise this conversation so it can continue: decisions, facts, open tasks, file paths. Be concise." }, { role: "user", content: t }] });
         addUsage(usage, r);
         return r.content;
-      });
+      }, () => relay({ type: "note", text: `Summarising earlier messages to fit ${model.replace(/^openrouter:/, "")}'s context window…` }));
       const key = progressKey(chat);
       if (opts.mode === "long" && !readProgress(this.home, key).contract?.draft) {
         updateProgress(this.home, key, (p) => void (p.contract = { goal: text.slice(0, 300), scope: [], never: [], doneWhen: [], draft: true, updatedAt: now() }));

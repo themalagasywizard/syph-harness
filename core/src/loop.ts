@@ -166,8 +166,15 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
 
     if (!assistant.tool_calls?.length) {
       if (!res.content.trim() && emptyRetries++ < 1) {
+        messages.pop(); // don't keep an empty assistant message: some providers reject it
         messages.push({ role: "user", content: "Your reply was empty. Please answer the request." });
         continue;
+      }
+      if (!res.content.trim()) {
+        const text = `${run.model.replace(/^openrouter:/, "")} returned an empty reply twice${res.finishReason ? ` (finish reason: ${res.finishReason})` : ""}. Try again, or pick another model.`;
+        assistant.content = text;
+        emit({ type: "token", text });
+        return result(text);
       }
       return result(res.content);
     }

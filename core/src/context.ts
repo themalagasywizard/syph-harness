@@ -84,9 +84,10 @@ export const historyTokens = (ms: ChatMessage[]) => ms.reduce((n, m) => n + esti
  * Keep the history inside the model's window. Older turns are replaced by a summary produced
  * by `summarise`, never silently dropped. Tool-call/result pairs are kept together.
  */
-export async function compactHistory(history: ChatMessage[], window: number, summarise: (text: string) => Promise<string>): Promise<ChatMessage[]> {
+export async function compactHistory(history: ChatMessage[], window: number, summarise: (text: string) => Promise<string>, onStart?: () => void): Promise<ChatMessage[]> {
   const limit = Math.floor(window * 0.6);
   if (historyTokens(history) <= limit) return history;
+  onStart?.();
   // Find a cut point on a user message, keeping roughly the last third of the window.
   let keepFrom = history.length;
   let tokens = 0;
@@ -100,6 +101,14 @@ export async function compactHistory(history: ChatMessage[], window: number, sum
   if (keepFrom <= 1 || keepFrom >= history.length) keepFrom = Math.max(1, history.findLastIndex((m) => m.role === "user"));
   const old = history.slice(0, keepFrom);
   const text = old.map((m) => `${m.role}${m.name ? `(${m.name})` : ""}: ${(m.content ?? "").slice(0, 4000)}${m.tool_calls ? ` [called ${m.tool_calls.map((c) => c.function.name).join(", ")}]` : ""}`).join("\n");
-  const summary = await summarise(text);
+  // The summary request itself must fit: keep the start and the end of a very long history.
+  const maxChars = Math.max(8000, Math.floor(window * 0.5) * 3);
+  const input = text.length > maxChars ? `${text.slice(0, maxChars / 3)}\n…(middle omitted)…\n${text.slice(-(maxChars * 2) / 3)}` : text;
+  let summary: string;
+  try {
+    summary = (await summarise(input)).trim() || "(The earlier conversation could not be summarised.)";
+  } catch {
+    summary = `(Earlier messages were dropped to fit the model's context window. The last of them:)\n${text.slice(-Math.min(maxChars, 6000))}`;
+  }
   return [{ role: "user", content: `[Summary of the earlier conversation]\n${summary}` }, { role: "assistant", content: "Understood. Continuing from there." }, ...history.slice(keepFrom)];
 }

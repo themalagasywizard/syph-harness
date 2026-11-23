@@ -78,6 +78,28 @@ async function once(req: CompletionRequest): Promise<CompletionResult> {
   if (req.tools?.length) body.tools = req.tools;
   if (req.jsonMode) body.response_format = { type: "json_object" };
 
+  // A stream that goes silent for 3 minutes is dead: fail loudly instead of hanging the chat.
+  const idle = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const poke = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => idle.abort(), IDLE_MS);
+  };
+  poke();
+  const signal = req.signal ? AbortSignal.any([req.signal, idle.signal]) : idle.signal;
+  try {
+    return await stream(req, body, signal, poke);
+  } catch (e) {
+    if (idle.signal.aborted && !req.signal?.aborted) throw new ProviderError(`${req.model} sent nothing for ${IDLE_MS / 60_000} minutes, so the request was stopped.`, undefined, true);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export const IDLE_MS = 180_000;
+
+async function stream(req: CompletionRequest, body: Record<string, unknown>, signal: AbortSignal, poke: () => void): Promise<CompletionResult> {
   const res = await fetch(req.baseUrl.replace(/\/$/, "") + "/chat/completions", {
     method: "POST",
     headers: {
@@ -86,7 +108,7 @@ async function once(req: CompletionRequest): Promise<CompletionResult> {
       "x-title": "Syph",
     },
     body: JSON.stringify(body),
-    signal: req.signal,
+    signal,
   });
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => "");
@@ -100,6 +122,7 @@ async function once(req: CompletionRequest): Promise<CompletionResult> {
   const decoder = new TextDecoder();
   let buf = "";
   for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+    poke();
     buf += decoder.decode(chunk, { stream: true });
     let nl: number;
     while ((nl = buf.indexOf("\n")) >= 0) {

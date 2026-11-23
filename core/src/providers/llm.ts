@@ -68,8 +68,10 @@ export async function complete(home: Home, call: LlmCall): Promise<LlmResult> {
   const resolved = resolveModel(call.model, home);
   const profile = getProfile(home, resolved.ref);
   const native = profile.nativeTools;
-  let messages = call.messages;
+  // History may come from another model (the user switched mid-chat): make it valid for this one.
+  let messages = normalizeHistory(call.messages);
   if (call.tools?.length && !native) messages = toTextToolMessages(messages, call.tools);
+  else if (!call.tools?.length && messages.some((m) => m.role === "tool" || m.tool_calls?.length)) messages = toTextToolMessages(messages, []);
 
   const transport =
     transportOverride ??
@@ -111,11 +113,53 @@ function toolPrompt(tools: ToolSpec[]) {
   return `\n\n# Tools\nYou can call tools. To call one, write exactly:\n${OPEN}{"name": "<tool name>", "arguments": {<arguments as JSON>}}${CLOSE}\nYou may call several tools in one reply. After the calls, stop and wait: the results come back in the next message. When you have the final answer, reply normally with no tool_call tags.\n\nAvailable tools:\n${list}`;
 }
 
+/**
+ * Make a conversation valid for any provider, whichever model wrote it:
+ * - tool call ids are unique and use only letters, digits, _ and - (some models reuse "call_0",
+ *   and strict providers reject duplicates or other characters);
+ * - every tool result follows the call it answers, and every call has a result;
+ * - an assistant message without tool calls has text, not null.
+ */
+export function normalizeHistory(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  let n = 0;
+  let open = new Map<string, string>(); // original id -> wire id, for the calls awaiting results
+  const closeOpen = () => {
+    for (const [, wid] of open) {
+      const call = [...out].reverse().find((m) => m.tool_calls?.some((c) => c.id === wid))?.tool_calls?.find((c) => c.id === wid);
+      out.push({ role: "tool", tool_call_id: wid, name: call?.function.name, content: "(no result recorded)" });
+    }
+    open = new Map();
+  };
+  for (const m of messages) {
+    if (m.role === "tool") {
+      const wid = m.tool_call_id ? open.get(m.tool_call_id) : undefined;
+      if (!wid) continue; // a result with no call before it: drop it
+      open.delete(m.tool_call_id!);
+      out.push({ ...m, tool_call_id: wid });
+      continue;
+    }
+    closeOpen();
+    if (m.role === "assistant" && m.tool_calls?.length) {
+      const calls = m.tool_calls.map((c) => {
+        const wid = `call_${(c.id || "x").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 24)}_${++n}`;
+        open.set(c.id, wid);
+        return { ...c, id: wid, function: { ...c.function, arguments: c.function.arguments || "{}" } };
+      });
+      out.push({ ...m, tool_calls: calls });
+    } else if (m.role === "assistant" && (m.content == null || m.content === "")) {
+      out.push({ ...m, content: "(no reply)" });
+    } else out.push(m);
+  }
+  closeOpen();
+  return out;
+}
+
 export function toTextToolMessages(messages: ChatMessage[], tools: ToolSpec[]): ChatMessage[] {
   const out: ChatMessage[] = [];
   const sysIdx = messages.findIndex((m) => m.role === "system");
   for (const [i, m] of messages.entries()) {
-    if (i === sysIdx) out.push({ role: "system", content: (m.content ?? "") + toolPrompt(tools) });
+    if (i === sysIdx) out.push({ role: "system", content: (m.content ?? "") + (tools.length ? toolPrompt(tools) : "") });
     else if (m.role === "assistant" && m.tool_calls?.length) {
       const calls = m.tool_calls.map((c) => `${OPEN}{"name": ${JSON.stringify(c.function.name)}, "arguments": ${c.function.arguments || "{}"}}${CLOSE}`).join("\n");
       out.push({ role: "assistant", content: [m.content, calls].filter(Boolean).join("\n") });
@@ -123,7 +167,7 @@ export function toTextToolMessages(messages: ChatMessage[], tools: ToolSpec[]): 
       out.push({ role: "user", content: `<tool_result name="${m.name ?? ""}">\n${m.content}\n</tool_result>` });
     } else out.push({ role: m.role, content: m.content, ...(m.images?.length ? { images: m.images } : {}) });
   }
-  if (sysIdx < 0) out.unshift({ role: "system", content: toolPrompt(tools).trim() });
+  if (sysIdx < 0 && tools.length) out.unshift({ role: "system", content: toolPrompt(tools).trim() });
   // Merge consecutive user messages (several tool results) for models that require alternation.
   return out.reduce<ChatMessage[]>((acc, m) => {
     const prev = acc.at(-1);
