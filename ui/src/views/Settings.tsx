@@ -1,14 +1,16 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronsDownUp, ChevronsUpDown, Cloud, Cpu, Download, Plug, Server } from "lucide-react";
+import { ChevronDown, ChevronsDownUp, ChevronsUpDown, Cloud, Cpu, Download, Plug, Server, Zap } from "lucide-react";
 import { Toggle } from "../components/Toggle";
 import { ModelPicker } from "../components/ModelPicker";
-import { OpenRouterKey } from "../components/OpenRouterKey";
+import { MiniMaxKey, OpenRouterKey } from "../components/OpenRouterKey";
 import { InterfaceSettings } from "../components/InterfaceSettings";
 import { PhonePairing } from "../components/PhonePairing";
 import { useApp } from "../App";
 import { api, type Config, type Profile } from "../api";
 import { useExt } from "../ext";
 import { SETTINGS_SECTIONS } from "../settingsIndex";
+
+const MINIMAX_DEFAULT = "minimax:MiniMax-M3.1-Flash";
 
 const OPEN_KEY = "syph.settingsOpen";
 function readOpen(): string[] {
@@ -86,7 +88,7 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
   const provider = (name: string) => cfg.providers.find((p) => p.name === name);
 
   const summary: Record<string, string> = {
-    providers: `OpenRouter ${cfg.hasOpenRouterKey ? "key set" : "no key"} · Ollama · OpenAI-compatible`,
+    providers: `OpenRouter ${cfg.hasOpenRouterKey ? "key set" : "no key"} · MiniMax ${cfg.hasMiniMaxKey ? "key set" : "no key"} · Ollama · OpenAI-compatible`,
     defaults: `Chat ${shortModel(cfg.defaults.chatModel)} · Tasks ${shortModel(cfg.defaults.taskModel)}`,
     profile: profile ? `${shortModel(profileRef)} · ${profile.strategy} · ${profile.nativeTools ? "native tools" : "text tools"}` : "How Syph runs each model",
     approvals: `YOLO ${onOff(cfg.approval.yolo)} · YOLO for Tasks ${onOff(cfg.approval.yoloTasks)}`,
@@ -111,6 +113,22 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
                 <OpenRouterKey onChange={refresh} />
               </div>
               <span className={`conn ${cfg.hasOpenRouterKey ? "" : "off"}`}>{cfg.hasOpenRouterKey ? "● Key set" : "○ No key"}</span>
+            </div>
+          </div>
+          <div className="card">
+            <div className="provider">
+              <div className="pi"><Zap size={20} /></div>
+              <div>
+                <h3>MiniMax</h3>
+                <p>MiniMax M3.1 Flash and M3 with your MiniMax subscription or API key. Pick them as <code>minimax:MiniMax-M3.1-Flash</code>.</p>
+                <MiniMaxKey onChange={refresh} />
+                {cfg.hasMiniMaxKey && (cfg.defaults.chatModel !== MINIMAX_DEFAULT || cfg.defaults.taskModel !== MINIMAX_DEFAULT) && (
+                  <button className="btn ghost sm" style={{ marginTop: 10 }} onClick={() => patch({ defaults: { ...cfg.defaults, chatModel: MINIMAX_DEFAULT, taskModel: MINIMAX_DEFAULT } })}>
+                    Use MiniMax M3.1 Flash for chats and tasks
+                  </button>
+                )}
+              </div>
+              <span className={`conn ${cfg.hasMiniMaxKey ? "" : "off"}`}>{cfg.hasMiniMaxKey ? "● Key set" : "○ No key"}</span>
             </div>
           </div>
           {[["ollama", "Ollama", "Local models on this machine or your network.", <Cpu size={20} />], ["lmstudio", "OpenAI-compatible", "LM Studio, llama.cpp, vLLM or any /v1 endpoint.", <Server size={20} />]].map(([name, title, desc, icon]) => (

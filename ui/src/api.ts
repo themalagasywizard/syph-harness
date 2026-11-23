@@ -267,13 +267,14 @@ export interface Profile {
 
 export interface Config {
   providers: { name: string; baseUrl: string; apiKeyEnv?: string }[];
-  defaults: { chatModel: string; taskModel: string; reflectorModel: string; judgeModel: string };
+  defaults: { chatModel: string; taskModel: string; reflectorModel: string; judgeModel: string; effort?: Effort };
   budgets: { dailyUsd: { chat: number; tasks: number; evolve: number } };
   approval: { autoAccept: { memory: boolean; skill: boolean }; yolo?: boolean; yoloTasks?: boolean; allowCommands?: string[]; taskCommands?: string[] };
   agent?: { shortSteps?: number; maxUsdPerRun?: number; maxMinutes?: number; longSteps?: number; longMinutes?: number; maxUsdPerLongRun?: number; reviewAfterErrors?: number; gitCheckpoints?: boolean; lazyTools?: boolean };
   evolve: { samplesPerCase: number; maxAttempts: number; heldOutFraction: number };
   killSwitch: boolean;
   hasOpenRouterKey: boolean;
+  hasMiniMaxKey?: boolean;
 }
 
 export interface AppState {
@@ -381,6 +382,7 @@ export const modelLabel = (ref?: string) => {
   const i = ref.indexOf(":");
   const provider = i > 0 ? ref.slice(0, i) : "openrouter";
   const model = i > 0 ? ref.slice(i + 1) : ref;
+  if (provider === "minimax") return model.replace(/^MiniMax-/, "MiniMax ").replace(/-/g, " ");
   if (provider !== "openrouter") return `${model} · ${provider}`;
   const name = model.split("/").pop()!;
   return name.replace(/^deepseek-/, "DeepSeek ").replace(/-/g, " ").replace(/\b(\w)/g, (c) => c.toUpperCase());
@@ -398,3 +400,5 @@ export function relTime(iso?: string | null) {
   if (s < 86400) return f(Math.round(s / 3600), "h");
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
+
+export type Effort = "auto" | "low" | "medium" | "high" | "xhigh" | "max";

@@ -17,6 +17,8 @@ export interface ChatMessage {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
+  /** The model's thinking, for providers that need it sent back with its tool calls (MiniMax). */
+  reasoning_content?: string;
 }
 
 export interface Usage {
@@ -107,6 +109,8 @@ export interface ModelProfile {
   costPerMTokOut?: number;
 }
 
+export type Effort = "auto" | "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface ProviderConfig {
   name: string;
   baseUrl: string;
@@ -120,6 +124,8 @@ export interface SyphConfig {
     taskModel: string;
     reflectorModel: string;
     judgeModel: string;
+    /** How hard reasoning models think in chats and tasks. Unset or "auto" leaves it to the provider. */
+    effort?: Effort;
   };
   budgets: { dailyUsd: { chat: number; tasks: number; evolve: number } };
   approval: {

@@ -12,15 +12,20 @@ export interface CompletionRequest {
   jsonMode?: boolean;
   /** Mark cache breakpoints (Anthropic and Gemini through OpenRouter); other providers cache on their own. */
   cache?: boolean;
+  /** Provider name from config, for the few wire differences between providers (see once()). */
+  provider?: string;
+  /** Reasoning effort; left out when unset or "auto". */
+  effort?: string;
   signal?: AbortSignal;
   onToken?: (t: string) => void;
 }
 
 /** Messages as they go on the wire: images become content parts, and cache breakpoints are marked. */
-export function wireMessages(messages: ChatMessage[], cache = false): unknown[] {
+export function wireMessages(messages: ChatMessage[], cache = false, keepReasoning = false): unknown[] {
   const lastUser = messages.findLastIndex((m) => m.role === "user");
   return messages.map((m, i) => {
-    const { images, ...rest } = m;
+    const { images, reasoning_content, ...rest } = m;
+    if (keepReasoning && reasoning_content) (rest as ChatMessage).reasoning_content = reasoning_content;
     const mark = cache && (m.role === "system" || i === lastUser) && typeof m.content === "string" && m.content.length > 0;
     if (!images?.length && !mark) return rest;
     const parts: Record<string, unknown>[] = [];
@@ -37,6 +42,8 @@ export interface CompletionResult {
   completionTokens: number;
   /** Prompt tokens read from the provider's prompt cache, when reported. */
   cachedTokens?: number;
+  /** Thinking streamed separately from the answer (MiniMax reasoning_content), if any. */
+  reasoning?: string;
   /** Cost reported by the provider (OpenRouter), if any. */
   costUsd?: number;
   finishReason?: string;
@@ -66,17 +73,27 @@ export const httpTransport: Transport = async (req) => {
 };
 
 async function once(req: CompletionRequest): Promise<CompletionResult> {
+  const minimax = req.provider === "minimax" || /\/\/api\.minimaxi?\.(io|com)\b/.test(req.baseUrl);
   const body: Record<string, unknown> = {
     model: req.model,
-    messages: wireMessages(req.messages, req.cache),
+    messages: wireMessages(req.messages, req.cache, minimax),
     stream: true,
     temperature: req.temperature,
     max_tokens: req.maxTokens,
     stream_options: { include_usage: true },
-    usage: { include: true }, // OpenRouter: report cost
   };
+  if (minimax) {
+    // MiniMax (platform.minimax.io, OpenAI-compatible): thinking comes back in reasoning_content and
+    // must be sent back with the tool calls it led to. It has no JSON mode, so JSON is asked for in the prompt.
+    body.reasoning_split = true;
+    if (req.effort) body.reasoning_effort = req.effort; // low, medium, high, xhigh, max
+  } else {
+    // OpenRouter takes low, medium or high and maps it onto each model's own reasoning setting.
+    if (req.effort && req.provider === "openrouter") body.reasoning = { effort: req.effort === "low" || req.effort === "medium" ? req.effort : "high" };
+    body.usage = { include: true }; // OpenRouter: report cost
+    if (req.jsonMode) body.response_format = { type: "json_object" };
+  }
   if (req.tools?.length) body.tools = req.tools;
-  if (req.jsonMode) body.response_format = { type: "json_object" };
 
   // A stream that goes silent for 3 minutes is dead: fail loudly instead of hanging the chat.
   const idle = new AbortController();
@@ -116,6 +133,7 @@ async function stream(req: CompletionRequest, body: Record<string, unknown>, sig
   }
 
   let content = "";
+  let reasoning = "";
   const calls = new Map<number, ToolCall>();
   let promptTokens = 0, completionTokens = 0, cachedTokens = 0, costUsd: number | undefined, finishReason: string | undefined;
 
@@ -140,6 +158,7 @@ async function stream(req: CompletionRequest, body: Record<string, unknown>, sig
       if (json.error) throw new ProviderError(json.error.message ?? JSON.stringify(json.error), json.error.code, false);
       const choice = json.choices?.[0];
       const delta = choice?.delta;
+      if (typeof delta?.reasoning_content === "string") reasoning += delta.reasoning_content;
       if (delta?.content) {
         content += delta.content;
         req.onToken?.(delta.content);
@@ -161,5 +180,5 @@ async function stream(req: CompletionRequest, body: Record<string, unknown>, sig
       }
     }
   }
-  return { content, toolCalls: [...calls.values()], promptTokens, completionTokens, cachedTokens, costUsd, finishReason };
+  return { content, toolCalls: [...calls.values()], promptTokens, completionTokens, cachedTokens, costUsd, finishReason, ...(reasoning ? { reasoning } : {}) };
 }

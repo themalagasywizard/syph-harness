@@ -748,3 +748,15 @@ textarea.input { resize: vertical; min-height: 96px; line-height: 1.55; }
 .icon-btn.attach.on { background: var(--surface-3); }
 .add-menu { min-width: 240px; }
 .gh-btn .gh-dot { right: 3px; bottom: 3px; }
+
+/* Model menu: recent models, "More models", and the effort selector */
+.menu .more-models { color: var(--muted); font-size: 13px; }
+.menu .effort { border-top: 1px solid var(--border); margin-top: 4px; padding: 2px 4px 6px; }
+.menu .effort .grp { padding-left: 6px; }
+.effort-seg { display: flex; gap: 2px; padding: 3px; background: var(--surface-3); border-radius: 10px; }
+.menu .effort-seg button { flex: 1; justify-content: center; padding: 6px 4px; border-radius: 7px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.menu .effort-seg button:hover { background: var(--surface-2); color: var(--text); }
+.menu .effort-seg button.on { background: var(--surface-1, var(--bg)); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.effort-hint { font-size: 11.5px; color: var(--faint); padding: 6px 6px 0; }
+.effort-tag { font-size: 11px; color: var(--faint); padding-left: 2px; }
+.menu-search .icon-btn { display: inline-flex; color: var(--muted); }

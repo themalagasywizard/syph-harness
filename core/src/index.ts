@@ -7,7 +7,7 @@ export { nextRun, parseCron } from "./cron.ts";
 export { nextRunOf } from "./scheduler.ts";
 export { complete, setTransport, registerMockModel, spendToday, BudgetError } from "./providers/llm.ts";
 export { readTrace as _readTrace } from "./trace.ts";
-export { listModels, getProfile, saveProfile, resolveModel } from "./providers/models.ts";
+export { listModels, getProfile, saveProfile, resolveModel, MINIMAX_MODELS, MINIMAX_DEFAULT } from "./providers/models.ts";
 export { listStrategies, registerStrategy } from "./strategies/index.ts";
 export { listCases, runSuite, isHeldOut, caseFromRun } from "./evals/index.ts";
 export { evolveOnce, gate } from "./evolve/engine.ts";
