@@ -66,6 +66,27 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); }
 .icon-btn.sm { width: 32px; height: 32px; }
 
+/* ---------- Desktop title bar ----------
+   Only in the desktop app (see components/TitleBar.tsx). The strip is the window's
+   title bar: the side part continues the sidebar, the rest continues the page, and
+   the OS draws the window buttons over the right end in the --bg colour. */
+.frame { height: 100%; display: flex; flex-direction: column; }
+.frame > .app { flex: 1; min-height: 0; height: auto; }
+.titlebar { height: 40px; display: flex; flex-shrink: 0; user-select: none; -webkit-app-region: drag; app-region: drag; }
+.titlebar-side { width: var(--sidebar-w); flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 12px 0 16px; background: var(--surface); border-right: 1px solid var(--border); overflow: hidden; transition: width .2s ease; }
+.titlebar.collapsed .titlebar-side { width: 72px; padding: 0 0 0 20px; }
+.titlebar-side .wordmark { font-size: 15px; gap: 8px; }
+.titlebar-side .wordmark svg { width: 17px; height: 17px; }
+.titlebar-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; padding: 0 8px; background: var(--bg); }
+.tb-btn { -webkit-app-region: no-drag; app-region: no-drag; width: 32px; height: 28px; border-radius: 8px; display: grid; place-items: center; color: var(--muted); transition: background .15s, color .15s; }
+.tb-btn:hover { background: var(--surface-2); color: var(--text); }
+/* Mac: leave room for the traffic lights on the left. */
+.on-darwin .titlebar-side { padding-left: 84px; }
+.on-darwin .titlebar.collapsed .titlebar-side { width: 120px; padding-left: 84px; }
+.in-shell .sidebar { padding-top: 10px; }
+/* The strip above already gives breathing room, so the page header can be shorter. */
+.in-shell .topbar { height: 48px; }
+
 /* ---------- Sidebar ---------- */
 .sidebar { width: var(--sidebar-w); background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 12px 12px 12px; flex-shrink: 0; transition: width .2s ease; overflow: hidden; }
 .sidebar.collapsed { width: 72px; }

@@ -3,6 +3,7 @@ import { useApp, type View } from "../App";
 import { api } from "../api";
 import { Mark, Wordmark } from "./Logo";
 import { ExtIcon, Slot, useSidebarPages } from "../ext";
+import { shell } from "./TitleBar";
 
 export function Sidebar({ view, collapsed, toggle }: { view: View; collapsed: boolean; toggle: () => void }) {
   const { state, go, refresh } = useApp();
@@ -25,10 +26,11 @@ export function Sidebar({ view, collapsed, toggle }: { view: View; collapsed: bo
 
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
-      <div className="brand">
+      {/* In the desktop app the title bar holds the toggle and the name instead. */}
+      {!shell && <div className="brand">
         <button className="icon-btn" onClick={toggle} aria-label="Toggle sidebar">{collapsed ? <Mark size={20} /> : <Menu size={20} />}</button>
         {!collapsed && <Wordmark />}
-      </div>
+      </div>}
 
       <button className="new-chat" onClick={() => go({ kind: "chat" })} title="New chat">
         <Plus size={20} />

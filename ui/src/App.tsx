@@ -9,6 +9,7 @@ import { ConnectorsView } from "./views/Connectors";
 import { api, subscribe, type AppState, type Job } from "./api";
 import { FilePanel } from "./components/FilePreview";
 import { ExtPage, ExtProvider, useExt } from "./ext";
+import { TitleBar, shell } from "./components/TitleBar";
 
 export type View =
   | { kind: "chat"; chatId?: string; projectId?: string; draft?: string; send?: boolean }
@@ -97,6 +98,9 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    // Recolour the window's own minimise / maximise / close buttons to match.
+    const css = getComputedStyle(document.documentElement);
+    shell?.setTitleBar({ color: css.getPropertyValue("--bg").trim(), symbolColor: css.getPropertyValue("--muted").trim() });
     try {
       localStorage.setItem("syph.theme", theme);
     } catch {
@@ -121,6 +125,8 @@ export default function App() {
   return (
     <AppCtx.Provider value={{ state, refresh, go, jobs, theme, setTheme, tick, showFile, shownFile }}>
       <ExtProvider tick={uiTick}>
+      <div className={`frame ${shell ? `in-shell on-${shell.platform}` : ""}`}>
+      {shell && <TitleBar collapsed={collapsed} toggle={() => setCollapsed((c) => !c)} />}
       <div className={`app ${shownFile ? "with-panel" : ""}`}>
         <Sidebar view={view} collapsed={collapsed} toggle={() => setCollapsed((c) => !c)} />
         <main className="main">
@@ -142,6 +148,7 @@ export default function App() {
           )}
         </main>
         {shownFile && <FilePanel path={shownFile} onClose={() => showFile(null)} />}
+      </div>
       </div>
       </ExtProvider>
     </AppCtx.Provider>
