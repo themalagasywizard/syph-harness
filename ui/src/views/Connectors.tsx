@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, ChevronDown, ChevronRight, ExternalLink, Github, LogOut, MessageSquarePlus, Plug, RotateCcw, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ExternalLink, Github, LogOut, MessageSquarePlus, Plug, Plus, RotateCcw, Star, Trash2 } from "lucide-react";
 import { useApp } from "../App";
 import { Toggle } from "../components/Toggle";
 import { Markdown } from "../components/Markdown";
@@ -27,6 +27,8 @@ export interface Connector {
   state: "needs_setup" | "needs_signin" | "ready" | "error";
   error?: string;
   account?: string;
+  multiAccount?: boolean;
+  accounts?: { account: string; default: boolean; signedIn: boolean }[];
   fields: Field[];
   tools: { name: string; description: string; permission: string }[];
   setup?: string;
@@ -79,7 +81,14 @@ function ConnectorCard({ c, reload }: { c: Connector; reload: () => void }) {
     setWaiting(url);
     window.open(url, "_blank", "noopener");
   });
-  const status = !c.enabled ? "Off" : c.state === "ready" && c.account ? `Connected · ${c.account}` : STATE_LABEL[c.state];
+  const signedIn = (c.accounts ?? []).filter((a) => a.signedIn).length;
+  const status = !c.enabled ? "Off" : c.state === "ready" && signedIn > 1 ? `Connected · ${signedIn} accounts` : c.state === "ready" && c.account ? `Connected · ${c.account}` : STATE_LABEL[c.state];
+  const many = !!c.multiAccount && (c.accounts?.length ?? 0) > 0 && (c.state === "ready" || c.state === "error");
+  const waitingHint = waiting && (
+    <span className="hint">
+      Finish signing in in your browser. Nothing opened? <a href={waiting} target="_blank" rel="noreferrer">Open the sign-in page</a>.
+    </span>
+  );
 
   return (
     <div className={`card connector ${c.enabled ? "" : "off"}`}>
@@ -132,7 +141,30 @@ function ConnectorCard({ c, reload }: { c: Connector; reload: () => void }) {
             </form>
           )}
 
-          {c.auth === "oauth2" && (
+          {c.auth === "oauth2" && many && (
+            <div className="accounts">
+              {c.accounts!.map((a) => (
+                <div className="account-row" key={a.account}>
+                  <span className="account-name">{a.account}</span>
+                  {a.default && <span className="chip-state ready">Default</span>}
+                  {!a.signedIn && <span className="chip-state needs_signin">Needs sign-in</span>}
+                  <div className="spacer" />
+                  {!a.signedIn && <button className="btn ghost sm" disabled={!!busy} onClick={signIn}><RotateCcw size={14} /> Sign in again</button>}
+                  {!a.default && (
+                    <button className="btn ghost sm" disabled={!!busy} onClick={() => act("default", () => api.post(`/connectors/${c.id}/default`, { account: a.account }))}><Star size={14} /> Make default</button>
+                  )}
+                  <button className="btn ghost sm" disabled={!!busy} title={`Sign ${a.account} out of Syph`} onClick={() => act("disconnect", () => api.post(`/connectors/${c.id}/disconnect`, { account: a.account }))}><LogOut size={14} /> Remove</button>
+                </div>
+              ))}
+              <div className="signin">
+                <button className="btn tonal sm" disabled={!!busy} onClick={signIn}><Plus size={14} /> Add another {c.icon === "google" ? "Google " : ""}account</button>
+                <span className="hint">{signedIn > 1 ? "The agent uses the default unless you name an account." : "Connect a second mailbox, for example work and personal."}</span>
+                {waitingHint}
+              </div>
+            </div>
+          )}
+
+          {c.auth === "oauth2" && !many && (
             <div className="signin">
               {c.state === "ready" || c.state === "error" ? (
                 <>
@@ -147,11 +179,7 @@ function ConnectorCard({ c, reload }: { c: Connector; reload: () => void }) {
                     {c.icon === "google" ? <span className="g-mark sm">G</span> : <ExternalLink size={16} />} Sign in with {c.icon === "google" ? "Google" : c.name}
                   </button>
                   {c.state === "needs_setup" && <span className="hint">Save the client ID and secret first.</span>}
-                  {waiting && (
-                    <span className="hint">
-                      Finish signing in in your browser. Nothing opened? <a href={waiting} target="_blank" rel="noreferrer">Open the sign-in page</a>.
-                    </span>
-                  )}
+                  {waitingHint}
                 </>
               )}
             </div>

@@ -2,7 +2,7 @@
 // Syph can't reach yet. Creating one asks the user first; keys are then added on the Connectors page.
 import { z } from "zod";
 import { defineTool, type Tool } from "../tools/types.ts";
-import type { Connectors } from "./index.ts";
+import type { Connectors, ConnectorStatus } from "./index.ts";
 
 const EXAMPLE = `export default (syph, connector) => ({
   tools: [
@@ -23,6 +23,13 @@ const EXAMPLE = `export default (syph, connector) => ({
   ],
 });`;
 
+/** " (a@x.com)" or " (accounts: a@x.com (default), b@y.com)" for a connector's signed-in accounts. */
+function accountsText(c: ConnectorStatus) {
+  const signedIn = (c.accounts ?? []).filter((a) => a.signedIn);
+  if (signedIn.length > 1) return ` (accounts: ${signedIn.map((a) => `${a.account}${a.default ? " (default)" : ""}`).join(", ")})`;
+  return c.account ? ` (${c.account})` : "";
+}
+
 export function connectorAgentTools(connectors: Connectors, onChange: () => void): Tool[] {
   const list = defineTool({
     name: "list_connectors",
@@ -33,7 +40,7 @@ export function connectorAgentTools(connectors: Connectors, onChange: () => void
       connectors
         .list()
         .map((c) => {
-          const state = !c.enabled ? "turned off" : c.state === "ready" ? `ready${c.account ? ` (${c.account})` : ""}` : c.state === "needs_setup" ? "needs keys from the user" : c.state === "needs_signin" ? "needs the user to sign in" : `error: ${c.error}`;
+          const state = !c.enabled ? "turned off" : c.state === "ready" ? `ready${accountsText(c)}` : c.state === "needs_setup" ? "needs keys from the user" : c.state === "needs_signin" ? "needs the user to sign in" : `error: ${c.error}`;
           return `- ${c.name} [${c.id}]: ${state}. ${c.description}${c.tools.length ? `\n  tools: ${c.tools.map((t) => t.name).join(", ")}` : ""}`;
         })
         .join("\n") || "No connectors yet.",
@@ -78,7 +85,9 @@ export function connectorPrompt(connectors: Connectors) {
   const ready = items.filter((c) => c.enabled && c.state === "ready");
   const waiting = items.filter((c) => c.enabled && c.state !== "ready");
   const lines = ["# Connectors"];
-  if (ready.length) lines.push(`Connected apps you can use through their tools: ${ready.map((c) => `${c.name}${c.account ? ` (${c.account})` : ""}`).join(", ")}.`);
+  if (ready.length) lines.push(`Connected apps you can use through their tools: ${ready.map((c) => `${c.name}${accountsText(c)}`).join(", ")}.`);
+  if (ready.some((c) => (c.accounts ?? []).filter((a) => a.signedIn).length > 1))
+    lines.push('Where an app has several accounts, its tools take an `account` argument (an address, or a unique part of one). Leave it out for the default account; read-only tools also take "all". Pick the account the user means, and say which one you used when you send, create or change something.');
   if (waiting.length) lines.push(`Not set up yet (the user must add keys or sign in on the Connectors page): ${waiting.map((c) => c.name).join(", ")}.`);
   lines.push("If the user wants an app you can't reach, offer to build a connector with create_connector.");
   return lines.join("\n");

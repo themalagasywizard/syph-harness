@@ -48,11 +48,20 @@ export interface ConnectorManifest {
   setup?: string;
   builtin?: boolean;
   createdBy?: "agent" | "user" | "syph";
+  /**
+   * oauth2 only: the user can sign in with several accounts (say a personal and a work Gmail).
+   * Every tool then takes an optional `account` argument; without it the default account is used.
+   */
+  multiAccount?: boolean;
 }
 
 /** What a connector's tools get: its settings and a fetch that is already signed in. */
 export interface ConnectorRuntime {
   id: string;
+  /** The signed-in account this runtime calls as (undefined: the default one). */
+  account?: string;
+  /** Every signed-in account, the default first. */
+  accounts(): string[];
   /** A field value the user saved (API key, base URL, ...). */
   get(key: string): string | undefined;
   /** fetch() with the connector's auth applied (OAuth token refreshed as needed, or the API key). */
@@ -80,7 +89,11 @@ export interface ConnectorStatus {
   /** needs_setup: required fields missing; needs_signin: OAuth not done; ready; error. */
   state: "needs_setup" | "needs_signin" | "ready" | "error";
   error?: string;
+  /** The default signed-in account. */
   account?: string;
+  multiAccount?: boolean;
+  /** oauth2: every account that has signed in, the default first. */
+  accounts?: { account: string; default: boolean; signedIn: boolean }[];
   fields: (ConnectorField & { set: boolean; value?: string })[];
   tools: { name: string; description: string; permission: string }[];
   setup?: string;

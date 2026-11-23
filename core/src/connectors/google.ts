@@ -39,7 +39,9 @@ const SETUP = `Google needs a free "OAuth client" from your own Google Cloud pro
 3. Open [Google Auth platform → Branding](https://console.cloud.google.com/auth/branding), fill in an app name and your email, and choose **External**.
 4. Under [Audience](https://console.cloud.google.com/auth/audience), press **Publish app** so your sign-in doesn't expire after 7 days. (Unverified is fine for your own use; Google shows a warning screen you can click through.) If you keep it in Testing, add your Google address as a test user.
 5. Under [Clients](https://console.cloud.google.com/auth/clients), press **Create client**, choose **Desktop app**, and copy the **Client ID** and **Client secret** here.
-6. Press **Sign in with Google** and allow access.`;
+6. Press **Sign in with Google** and allow access.
+
+To use more than one Google account (say a personal and a work Gmail), press **Add another account** and pick the other account. The same client works for all of them; if your app is still in Testing, add each address as a test user.`;
 
 const b64url = (s: string) => Buffer.from(s, "utf8").toString("base64url");
 const fromB64url = (s: string) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
@@ -105,10 +107,11 @@ export const googleWorkspace: BuiltinConnector = {
       revokeUrl: "https://oauth2.googleapis.com/revoke",
       userInfoUrl: "https://openidconnect.googleapis.com/v1/userinfo",
       scopes: GOOGLE_SCOPES,
-      params: { access_type: "offline", prompt: "consent", include_granted_scopes: "true" },
+      params: { access_type: "offline", prompt: "consent select_account", include_granted_scopes: "true" },
     },
     setup: SETUP,
     createdBy: "syph",
+    multiAccount: true,
   },
   factory: ({ z, defineTool }, g) => ({
     tools: [
