@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Cloud, Cpu, Download, Plug, Server } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronsDownUp, ChevronsUpDown, Cloud, Cpu, Download, Plug, Server } from "lucide-react";
 import { Toggle } from "../components/Toggle";
 import { ModelPicker } from "../components/ModelPicker";
 import { OpenRouterKey } from "../components/OpenRouterKey";
@@ -7,9 +7,40 @@ import { InterfaceSettings } from "../components/InterfaceSettings";
 import { PhonePairing } from "../components/PhonePairing";
 import { useApp } from "../App";
 import { api, type Config, type Profile } from "../api";
+import { useExt } from "../ext";
+import { SETTINGS_SECTIONS } from "../settingsIndex";
 
-export function SettingsView() {
+const OPEN_KEY = "syph.settingsOpen";
+function readOpen(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(OPEN_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+/** Short model name for a summary line: "openrouter:deepseek/deepseek-v4.1-flash" becomes "deepseek-v4.1-flash". */
+const shortModel = (m?: string) => (m ? m.split(/[:/]/).pop() : "not set");
+const onOff = (v?: boolean) => (v ? "on" : "off");
+
+/**
+ * Settings is a list of folded sections: each shows its name and a one-line summary of what's
+ * set, and opens to the full controls. Which ones are open is remembered. `section` (and `item`)
+ * come from the URL, so the sidebar search can open a section and point at one setting.
+ */
+export function SettingsView({ section, item }: { section?: string; item?: string }) {
   const { state, refresh, theme, setTheme } = useApp();
+  const { items: uiItems, safe } = useExt();
+  const [open, setOpenList] = useState<string[]>(() => (section ? [...new Set([...readOpen(), section])] : readOpen()));
+  const setOpen = (ids: string[]) => {
+    setOpenList(ids);
+    try {
+      localStorage.setItem(OPEN_KEY, JSON.stringify(ids));
+    } catch {
+      /* private mode */
+    }
+  };
+  const toggle = (id: string) => setOpen(open.includes(id) ? open.filter((x) => x !== id) : [...open, id]);
   const [profileRef, setProfileRef] = useState<string>();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [exported, setExported] = useState<string>();
@@ -21,6 +52,24 @@ export function SettingsView() {
   useEffect(() => {
     if (profileRef) api.get<Profile>(`/profiles/${encodeURIComponent(profileRef)}`).then(setProfile);
   }, [profileRef]);
+
+  // Arriving from search: open the section, scroll to it, and flash the setting asked for.
+  useEffect(() => {
+    if (!section || !cfg) return;
+    if (!open.includes(section)) setOpen([...open, section]);
+    const t = setTimeout(() => {
+      const sec = document.getElementById(`set-${section}`);
+      if (!sec) return;
+      const want = item?.toLowerCase().replace(/ (model|budget|base url)$/, "");
+      const row = want ? [...sec.querySelectorAll<HTMLElement>(".row, .card")].find((r) => r.textContent?.toLowerCase().includes(want)) : undefined;
+      (row ?? sec).scrollIntoView({ block: row ? "center" : "start", behavior: "smooth" });
+      if (row) {
+        row.classList.add("flash");
+      }
+    }, 80);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section, item, !!cfg]);
 
   if (!cfg || !state) return null;
   const agent = cfg.agent ?? {};
@@ -36,23 +85,23 @@ export function SettingsView() {
   };
   const provider = (name: string) => cfg.providers.find((p) => p.name === name);
 
-  return (
-    <div className="page">
-      <div className="page-inner" style={{ maxWidth: 780 }}>
-        <div className="page-head">
-          <div>
-            <h2>Settings</h2>
-            <p>Providers, models, budgets and how much Syph may change on its own. Stored in <code>{state.homePath}</code>.</p>
-          </div>
-        </div>
-
-        <div className="section-label" style={{ paddingLeft: 0 }}>Phone</div>
-        <div style={{ marginBottom: 32 }}>
-          <PhonePairing />
-        </div>
-
-        <div className="section-label" style={{ paddingLeft: 0 }}>Model providers</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 32 }}>
+  const summary: Record<string, string> = {
+    providers: `OpenRouter ${cfg.hasOpenRouterKey ? "key set" : "no key"} · Ollama · OpenAI-compatible`,
+    defaults: `Chat ${shortModel(cfg.defaults.chatModel)} · Tasks ${shortModel(cfg.defaults.taskModel)}`,
+    profile: profile ? `${shortModel(profileRef)} · ${profile.strategy} · ${profile.nativeTools ? "native tools" : "text tools"}` : "How Syph runs each model",
+    approvals: `YOLO ${onOff(cfg.approval.yolo)} · YOLO for Tasks ${onOff(cfg.approval.yoloTasks)}`,
+    long: `Long tasks: ${agent.longSteps ? `${agent.longSteps} steps` : "no step cap"}, ${agent.maxUsdPerLongRun ? `$${agent.maxUsdPerLongRun}` : "no spend cap"} · Checkpoints ${onOff(agent.gitCheckpoints)}`,
+    budgets: `$${(state.spend.chat ?? 0).toFixed(2)} of $${cfg.budgets.dailyUsd.chat} chat today · Tasks $${cfg.budgets.dailyUsd.tasks} · Evolve $${cfg.budgets.dailyUsd.evolve}`,
+    connectors: "Google Workspace, API keys and other apps",
+    extensions: `${state.extensions.length} extension${state.extensions.length === 1 ? "" : "s"} · ${state.mcp.length} MCP server${state.mcp.length === 1 ? "" : "s"}`,
+    phone: "Pair the Syph iPhone app with a QR code",
+    appearance: `${theme === "dark" ? "Dark" : "Light"} theme · ${uiItems.length} interface change${uiItems.length === 1 ? "" : "s"}${safe ? " · safe mode on" : ""}`,
+    evolve: `Kill switch ${onOff(cfg.killSwitch)} · Auto-accept memory ${onOff(cfg.approval.autoAccept.memory)}, skills ${onOff(cfg.approval.autoAccept.skill)}`,
+    data: exported ?? "Export good answers as fine-tuning data",
+  };
+  const bodies: Record<string, ReactNode> = {
+    providers: (
+<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div className="card">
             <div className="provider">
               <div className="pi"><Cloud size={20} /></div>
@@ -81,9 +130,9 @@ export function SettingsView() {
             </div>
           ))}
         </div>
-
-        <div className="section-label" style={{ paddingLeft: 0 }}>Default models</div>
-        <div className="list" style={{ marginBottom: 32 }}>
+    ),
+    defaults: (
+<div className="list">
           {([["chatModel", "Chat", "New chats start with this model."], ["taskModel", "Tasks", "Scheduled tasks use this unless they pick one."], ["reflectorModel", "Reflector", "Proposes improvements. Use your strongest model."], ["judgeModel", "Judge", "Scores eval answers. Ideally a different family from the chat model."]] as const).map(([k, label, hint]) => (
             <div key={k} className="row" style={{ gridTemplateColumns: "1fr 280px" }}>
               <div><div className="name">{label}</div><div className="sub">{hint}</div></div>
@@ -91,10 +140,11 @@ export function SettingsView() {
             </div>
           ))}
         </div>
-
-        <div className="section-label" style={{ paddingLeft: 0 }}>Model profile</div>
-        <p className="hint" style={{ marginTop: -2, marginBottom: 12 }}>How Syph runs a model. The improvement loop may propose changes to these too.</p>
-        <div className="list" style={{ marginBottom: 32 }}>
+    ),
+    profile: (
+      <>
+        <p className="hint set-note">How Syph runs a model. The improvement loop may propose changes to these too.</p>
+<div className="list">
           <div className="row" style={{ gridTemplateColumns: "1fr 280px" }}>
             <div className="name">Model</div>
             <ModelPicker value={profileRef} onChange={setProfileRef} compact={false} up={false} />
@@ -134,17 +184,10 @@ export function SettingsView() {
             </>
           )}
         </div>
-
-        <div className="section-label" style={{ paddingLeft: 0 }}>Connectors</div>
-        <div className="list" style={{ marginBottom: 32 }}>
-          <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
-            <div style={{ minWidth: 0 }}><div className="name">Google Workspace and other apps</div><div className="sub wrap">Sign in to Google, add API keys, and remove connectors Syph created.</div></div>
-            <a className="btn tonal sm" href="#/connectors">Open Connectors</a>
-          </div>
-        </div>
-
-        <div className="section-label" style={{ paddingLeft: 0 }}>Tool approvals</div>
-        <div className="list" style={{ marginBottom: 32 }}>
+      </>
+    ),
+    approvals: (
+<div className="list">
           <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
             <div style={{ minWidth: 0 }}><div className="name">YOLO mode</div><div className="sub wrap">Run {navigator.userAgent.includes("Windows") ? "PowerShell" : "shell"} commands and other ask-first tools in chats without asking. Also lets any tool waiting for you run. You can flip it from the chat box too.</div></div>
             <Toggle on={!!cfg.approval.yolo} onChange={(v) => patch({ approval: { yolo: v } })} label="YOLO mode" />
@@ -154,9 +197,9 @@ export function SettingsView() {
             <Toggle on={!!cfg.approval.yoloTasks} onChange={(v) => patch({ approval: { yoloTasks: v } })} label="YOLO for scheduled Tasks" />
           </div>
         </div>
-
-        <div className="section-label" style={{ paddingLeft: 0 }}>Long tasks</div>
-        <div className="list" style={{ marginBottom: 32 }}>
+    ),
+    long: (
+<div className="list">
           {([
             ["shortSteps", "Steps for a quick request", "Past this, Syph is asked to plan the rest. A plan of three or more steps, or an approved contract, makes it a long task.", 5, 500],
             ["maxUsdPerRun", "Spend for a quick request (USD)", "0 means no cap.", 0, 50],
@@ -200,11 +243,58 @@ export function SettingsView() {
             </div>
           )}
         </div>
-
+    ),
+    budgets: (
+<div className="list">
+          {(["chat", "tasks", "evolve"] as const).map((k) => (
+            <div key={k} className="row" style={{ gridTemplateColumns: "1fr 120px" }}>
+              <div><div className="name">{k[0].toUpperCase() + k.slice(1)}</div><div className="sub">${(state.spend[k] ?? 0).toFixed(3)} spent today</div></div>
+              <input className="input" type="number" min={0} step={0.5} value={cfg.budgets.dailyUsd[k]} onChange={(e) => patch({ budgets: { dailyUsd: { ...cfg.budgets.dailyUsd, [k]: Number(e.target.value) } } })} />
+            </div>
+          ))}
+        </div>
+    ),
+    connectors: (
+<div className="list">
+          <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
+            <div style={{ minWidth: 0 }}><div className="name">Google Workspace and other apps</div><div className="sub wrap">Sign in to Google, add API keys, and remove connectors Syph created.</div></div>
+            <a className="btn tonal sm" href="#/connectors">Open Connectors</a>
+          </div>
+        </div>
+    ),
+    extensions: (
+<div className="list">
+          {state.extensions.length === 0 && state.mcp.length === 0 && <div className="empty" style={{ padding: 20 }}>No extensions yet. Syph can write them as proposals; MCP servers go in config.json under <code>mcpServers</code>.</div>}
+          {state.extensions.map((x) => (
+            <div key={x.name} className="row" style={{ gridTemplateColumns: "20px 1fr auto" }}>
+              <Plug size={16} color="var(--muted)" />
+              <div><div className="name">{x.name}</div><div className="sub">{x.ok ? `Tools: ${x.tools.join(", ") || "none"}` : x.error}</div></div>
+              <span className={`conn ${x.ok ? "" : "off"}`}>{x.ok ? "● Loaded" : "○ Off"}</span>
+            </div>
+          ))}
+          {state.mcp.map((m) => (
+            <div key={m.name} className="row" style={{ gridTemplateColumns: "20px 1fr auto" }}>
+              <Server size={16} color="var(--muted)" />
+              <div><div className="name">MCP · {m.name}</div><div className="sub">{m.error ?? `${m.tools.length} tools`}</div></div>
+              <span className={`conn ${m.error ? "off" : ""}`}>{m.error ? "○ Error" : "● Connected"}</span>
+            </div>
+          ))}
+        </div>
+    ),
+    phone: <PhonePairing />,
+    appearance: (
+      <>
+        <div className="list">
+          <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
+            <div className="name">Dark theme</div>
+            <Toggle on={theme === "dark"} onChange={(v) => setTheme(v ? "dark" : "light")} label="Dark theme" />
+          </div>
+        </div>
         <InterfaceSettings />
-
-        <div className="section-label" style={{ paddingLeft: 0 }}>Self-improvement</div>
-        <div className="list" style={{ marginBottom: 32 }}>
+      </>
+    ),
+    evolve: (
+<div className="list">
           <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
             <div><div className="name">Auto-accept memory</div><div className="sub">Only when evals improve and nothing regresses.</div></div>
             <Toggle on={cfg.approval.autoAccept.memory} onChange={(v) => patch({ approval: { autoAccept: { ...cfg.approval.autoAccept, memory: v } } })} label="Auto-accept memory" />
@@ -222,47 +312,48 @@ export function SettingsView() {
             <Toggle on={cfg.killSwitch} onChange={(v) => patch({ killSwitch: v })} label="Kill switch" />
           </div>
         </div>
-
-        <div className="section-label" style={{ paddingLeft: 0 }}>Daily budgets (USD)</div>
-        <div className="list" style={{ marginBottom: 32 }}>
-          {(["chat", "tasks", "evolve"] as const).map((k) => (
-            <div key={k} className="row" style={{ gridTemplateColumns: "1fr 120px" }}>
-              <div><div className="name">{k[0].toUpperCase() + k.slice(1)}</div><div className="sub">${(state.spend[k] ?? 0).toFixed(3)} spent today</div></div>
-              <input className="input" type="number" min={0} step={0.5} value={cfg.budgets.dailyUsd[k]} onChange={(e) => patch({ budgets: { dailyUsd: { ...cfg.budgets.dailyUsd, [k]: Number(e.target.value) } } })} />
-            </div>
-          ))}
-        </div>
-
-        <div className="section-label" style={{ paddingLeft: 0 }}>Extensions and MCP</div>
-        <div className="list" style={{ marginBottom: 32 }}>
-          {state.extensions.length === 0 && state.mcp.length === 0 && <div className="empty" style={{ padding: 20 }}>No extensions yet. Syph can write them as proposals; MCP servers go in config.json under <code>mcpServers</code>.</div>}
-          {state.extensions.map((x) => (
-            <div key={x.name} className="row" style={{ gridTemplateColumns: "20px 1fr auto" }}>
-              <Plug size={16} color="var(--muted)" />
-              <div><div className="name">{x.name}</div><div className="sub">{x.ok ? `Tools: ${x.tools.join(", ") || "none"}` : x.error}</div></div>
-              <span className={`conn ${x.ok ? "" : "off"}`}>{x.ok ? "● Loaded" : "○ Off"}</span>
-            </div>
-          ))}
-          {state.mcp.map((m) => (
-            <div key={m.name} className="row" style={{ gridTemplateColumns: "20px 1fr auto" }}>
-              <Server size={16} color="var(--muted)" />
-              <div><div className="name">MCP · {m.name}</div><div className="sub">{m.error ?? `${m.tools.length} tools`}</div></div>
-              <span className={`conn ${m.error ? "off" : ""}`}>{m.error ? "○ Error" : "● Connected"}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="section-label" style={{ paddingLeft: 0 }}>Data</div>
-        <div className="list" style={{ marginBottom: 32 }}>
+    ),
+    data: (
+<div className="list">
           <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
             <div><div className="name">Export training data</div><div className="sub">{exported ?? "SFT (good answers) and DPO (up vs down pairs) as JSONL, for fine-tuning a local model."}</div></div>
             <button className="btn tonal sm" onClick={async () => { const r = await api.post<{ sft: string; sftCount: number; dpoCount: number }>("/export"); setExported(`${r.sftCount} SFT and ${r.dpoCount} DPO examples written next to ${r.sft}`); }}><Download size={14} /> Export</button>
           </div>
-          <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
-            <div className="name">Dark theme</div>
-            <Toggle on={theme === "dark"} onChange={(v) => setTheme(v ? "dark" : "light")} label="Dark theme" />
-          </div>
         </div>
+    ),
+  };
+  const allOpen = open.length >= SETTINGS_SECTIONS.length;
+
+  return (
+    <div className="page">
+      <div className="page-inner settings" style={{ maxWidth: 780 }}>
+        <div className="page-head">
+          <div>
+            <h2>Settings</h2>
+            <p>Stored in <code>{state.homePath}</code>. Open a section to change it.</p>
+          </div>
+          <div className="spacer" />
+          <button className="btn ghost sm" onClick={() => setOpen(allOpen ? [] : SETTINGS_SECTIONS.map((s) => s.id))}>
+            {allOpen ? <><ChevronsDownUp size={14} /> Fold all</> : <><ChevronsUpDown size={14} /> Open all</>}
+          </button>
+        </div>
+
+        {SETTINGS_SECTIONS.map((s, i) => {
+          const isOpen = open.includes(s.id);
+          return (
+            <div key={s.id}>
+              {s.group !== SETTINGS_SECTIONS[i - 1]?.group && <div className="section-label set-group">{s.group}</div>}
+              <section id={`set-${s.id}`} className={`set-sec ${isOpen ? "open" : ""}`}>
+                <button className="set-head" onClick={() => toggle(s.id)} aria-expanded={isOpen}>
+                  <span className="set-title">{s.title}</span>
+                  <span className="set-sum ellipsis">{summary[s.id]}</span>
+                  <ChevronDown size={16} className="set-chev" />
+                </button>
+                {isOpen && <div className="set-body">{bodies[s.id]}</div>}
+              </section>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

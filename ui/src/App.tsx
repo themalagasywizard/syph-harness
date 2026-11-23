@@ -9,6 +9,7 @@ import { ConnectorsView } from "./views/Connectors";
 import { api, subscribe, type AppState, type Job } from "./api";
 import { FilePanel } from "./components/FilePreview";
 import { ExtPage, ExtProvider, useExt } from "./ext";
+import { TitleBar, shell } from "./components/TitleBar";
 
 export type View =
   | { kind: "chat"; chatId?: string; projectId?: string; draft?: string; send?: boolean }
@@ -16,7 +17,7 @@ export type View =
   | { kind: "projects"; projectId?: string }
   | { kind: "tasks" }
   | { kind: "evolve" }
-  | { kind: "settings" }
+  | { kind: "settings"; section?: string; item?: string }
   | { kind: "connectors" };
 
 interface Ctx {
@@ -42,7 +43,8 @@ function readHash(): View {
   const q = new URLSearchParams(query ?? "");
   if (kind === "projects") return { kind, projectId: id };
   if (kind === "page") return { kind, ext: id ?? "", id: path.split("/")[2] ?? "" };
-  if (kind === "tasks" || kind === "evolve" || kind === "settings" || kind === "connectors") return { kind };
+  if (kind === "settings") return { kind, section: id, item: q.get("item") ?? undefined };
+  if (kind === "tasks" || kind === "evolve" || kind === "connectors") return { kind };
   return { kind: "chat", chatId: id, projectId: q.get("project") ?? undefined, draft: q.get("draft") ?? undefined, send: q.get("send") === "1" };
 }
 
@@ -97,6 +99,9 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    // Recolour the window's own minimise / maximise / close buttons to match.
+    const css = getComputedStyle(document.documentElement);
+    shell?.setTitleBar({ color: css.getPropertyValue("--bg").trim(), symbolColor: css.getPropertyValue("--muted").trim() });
     try {
       localStorage.setItem("syph.theme", theme);
     } catch {
@@ -109,11 +114,12 @@ export default function App() {
       location.hash = `/page/${v.ext}/${v.id}`;
       return;
     }
-    const id = v.kind === "chat" ? v.chatId : v.kind === "projects" ? v.projectId : undefined;
+    const id = v.kind === "chat" ? v.chatId : v.kind === "projects" ? v.projectId : v.kind === "settings" ? v.section : undefined;
     const params = new URLSearchParams();
     if (v.kind === "chat" && !v.chatId && v.projectId) params.set("project", v.projectId);
     if (v.kind === "chat" && !v.chatId && v.draft) params.set("draft", v.draft);
     if (v.kind === "chat" && !v.chatId && v.draft && v.send) params.set("send", "1");
+    if (v.kind === "settings" && v.item) params.set("item", v.item);
     const q = params.size ? `?${params}` : "";
     location.hash = `/${v.kind}${id ? "/" + id : ""}${q}`;
   };
@@ -121,6 +127,8 @@ export default function App() {
   return (
     <AppCtx.Provider value={{ state, refresh, go, jobs, theme, setTheme, tick, showFile, shownFile }}>
       <ExtProvider tick={uiTick}>
+      <div className={`frame ${shell ? `in-shell on-${shell.platform}` : ""}`}>
+      {shell && <TitleBar collapsed={collapsed} toggle={() => setCollapsed((c) => !c)} />}
       <div className={`app ${shownFile ? "with-panel" : ""}`}>
         <Sidebar view={view} collapsed={collapsed} toggle={() => setCollapsed((c) => !c)} />
         <main className="main">
@@ -136,12 +144,13 @@ export default function App() {
               {view.kind === "projects" && <ProjectsView projectId={view.projectId} />}
               {view.kind === "tasks" && <TasksView />}
               {view.kind === "evolve" && <EvolveView />}
-              {view.kind === "settings" && <SettingsView />}
+              {view.kind === "settings" && <SettingsView key={`${view.section ?? ""}/${view.item ?? ""}`} section={view.section} item={view.item} />}
               {view.kind === "connectors" && <ConnectorsView />}
             </>
           )}
         </main>
         {shownFile && <FilePanel path={shownFile} onClose={() => showFile(null)} />}
+      </div>
       </div>
       </ExtProvider>
     </AppCtx.Provider>

@@ -1,7 +1,7 @@
 // Syph desktop shell. It runs the same local server as `npm start` in a child
 // process, opens it in a window, and keeps living in the tray when the window
 // is closed, so scheduled Tasks keep running. Quit from the tray menu.
-const { app, BrowserWindow, Menu, Tray, nativeImage, nativeTheme, shell, dialog } = require("electron");
+const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, nativeTheme, shell, dialog } = require("electron");
 const { spawn } = require("node:child_process");
 const net = require("node:net");
 const path = require("node:path");
@@ -94,6 +94,20 @@ async function startServer() {
   return `http://127.0.0.1:${port}`;
 }
 
+// The UI draws its own title bar (see TitleBar in ui/src/App.tsx). This is its height,
+// and the colours of the window buttons until the UI sends the theme's own.
+const TITLEBAR_HEIGHT = 40;
+const dark = nativeTheme.shouldUseDarkColors;
+const overlay = { color: dark ? "#0d0d0c" : "#f8f7f3", symbolColor: dark ? "#98978f" : "#6b6a63", height: TITLEBAR_HEIGHT };
+const isColor = (c) => typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c);
+
+ipcMain.on("syph:titlebar", (e, colors) => {
+  if (!win || e.sender !== win.webContents || process.platform === "darwin") return;
+  if (!colors || !isColor(colors.color) || !isColor(colors.symbolColor)) return;
+  win.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor, height: TITLEBAR_HEIGHT });
+  win.setBackgroundColor(colors.color);
+});
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -102,11 +116,15 @@ function createWindow() {
     minHeight: 520,
     title: "Syph",
     icon: path.join(ASSETS, "icon.png"),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0E0E0E" : "#F7F6F3",
+    backgroundColor: overlay.color,
     autoHideMenuBar: true,
+    // No native title bar: the app's own top strip is the title bar, and Windows keeps
+    // its minimise, maximise and close buttons drawn over the strip's right end.
+    titleBarStyle: "hidden",
+    ...(process.platform === "darwin" ? { trafficLightPosition: { x: 16, y: 13 } } : { titleBarOverlay: overlay }),
     show: false,
     // plugins: the built-in PDF viewer, used by file previews.
-    webPreferences: { contextIsolation: true, sandbox: true, plugins: true },
+    webPreferences: { contextIsolation: true, sandbox: true, plugins: true, preload: path.join(__dirname, "preload.cjs") },
   });
   win.once("ready-to-show", () => win.show());
   win.loadURL(url);
