@@ -152,7 +152,7 @@ export function RepoLinkModal({ projectId, chatId, ensureChat, onClose, onLinked
 }
 
 /** The repo pill in the chat bar: which repos this chat works on, switch, link, unlink. */
-export function RepoComposerMenu({ chatId, projectId, ensureChat }: { chatId?: string; projectId?: string; ensureChat: () => Promise<string> }) {
+export function RepoComposerMenu({ chatId, projectId, ensureChat, iconOnly }: { chatId?: string; projectId?: string; ensureChat: () => Promise<string>; iconOnly?: boolean }) {
   const { state, go } = useApp();
   const { repos, active, reload } = useRepos({ chatId, projectId });
   const [open, setOpen] = useState(false);
@@ -172,11 +172,18 @@ export function RepoComposerMenu({ chatId, projectId, ensureChat }: { chatId?: s
   };
   return (
     <div className="model-menu" ref={ref}>
-      <button className={`pill ${active ? "on" : ""}`} onClick={() => setOpen((o) => !o)} title={active ? `Working on ${active.name} (${active.path})` : "Link a repository to this chat"}>
-        <FolderGit2 size={15} /> <span className="ellipsis pill-label">{active?.name ?? "Repo"}</span>
-      </button>
+      {iconOnly ? (
+        <button className={`icon-btn gh-btn ${gh?.connected ? "connected" : ""} ${open ? "on" : ""}`} onClick={() => setOpen((o) => !o)} aria-label="Repositories" title={gh?.connected ? `GitHub connected${gh.account ? ` as ${gh.account}` : ""}. Repositories for this chat` : "Link a repository or connect GitHub"}>
+          <Github size={19} />
+          {gh?.connected && <span className="gh-dot" />}
+        </button>
+      ) : (
+        <button className={`pill ${active ? "on" : ""}`} onClick={() => setOpen((o) => !o)} title={active ? `Working on ${active.name} (${active.path})` : "Link a repository to this chat"}>
+          <FolderGit2 size={15} /> <span className="ellipsis pill-label">{active?.name ?? "Repo"}</span>
+        </button>
+      )}
       {open && (
-        <div className="menu repo-menu" style={{ left: 0 }}>
+        <div className="menu repo-menu" style={iconOnly ? { right: 0, left: "auto", top: 40, bottom: "auto" } : { left: 0 }}>
           {!!repos.length && <div className="grp">Working on</div>}
           {repos.map((r) => (
             <div key={r.path} className={`repo-item ${r.active ? "active" : ""}`}>

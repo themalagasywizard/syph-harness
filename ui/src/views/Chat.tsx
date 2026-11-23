@@ -597,7 +597,28 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
       <div className="topbar">
         <span className="title ellipsis">{chat?.title && chat.title !== "New chat" ? chat.title : ""}</span>
         <div className="spacer" />
+        <div className="model-menu">
+          <button className={`pill ${project ? "on" : ""}`} onClick={() => setMenu((m) => !m)} title="The project this chat belongs to">
+            <FolderClosed size={15} /> <span className="ellipsis pill-label">{project?.name ?? "No project"}</span>
+          </button>
+          {menu && (
+            <div className="menu" style={{ right: 0, left: "auto", top: 40, bottom: "auto" }}>
+              <button onClick={() => { setProjectId(undefined); setMenu(false); }}>No project {!project && <Check size={14} className="id" />}</button>
+              {state?.projects.map((p) => (
+                <button key={p.id} onClick={() => { setProjectId(p.id); setMenu(false); }}>
+                  <span className="status-dot" style={{ background: p.color }} /> {p.name}
+                  {p.id === projectId && <Check size={14} className="id" />}
+                </button>
+              ))}
+              {!state?.projects.length && <div className="hint" style={{ padding: 10 }}>No projects yet.</div>}
+            </div>
+          )}
+        </div>
         <ActiveRepoChip chatId={cid} projectId={projectId} />
+        <RepoComposerMenu chatId={cid} projectId={projectId} ensureChat={ensureChat} iconOnly />
+        <button className={`pill yolo ${yolo ? "on" : ""}`} onClick={toggleYolo} title={yolo ? "YOLO is on: shell (PowerShell) and other ask-first tools run without asking. Click to turn off." : "Turn on YOLO: run shell (PowerShell) and other ask-first tools without asking."}>
+          <Zap size={15} fill={yolo ? "currentColor" : "none"} /> <span className="yolo-text">{yolo ? "YOLO on" : "Ask first"}</span>
+        </button>
         <Slot name="chat.header" ctx={slotCtx} />
         {cid && progress?.contract && !progress.contract.draft && (
           <div className="model-menu">
@@ -737,29 +758,8 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             }}
           />
           <div className="composer-row">
-            <div className="model-menu">
-              <button className={`pill ${project ? "on" : ""}`} onClick={() => setMenu((m) => !m)}>
-                <FolderClosed size={15} /> {project?.name ?? "No project"}
-              </button>
-              {menu && (
-                <div className="menu" style={{ left: 0 }}>
-                  <button onClick={() => { setProjectId(undefined); setMenu(false); }}>No project {!project && <Check size={14} className="id" />}</button>
-                  {state?.projects.map((p) => (
-                    <button key={p.id} onClick={() => { setProjectId(p.id); setMenu(false); }}>
-                      <span className="status-dot" style={{ background: p.color }} /> {p.name}
-                      {p.id === projectId && <Check size={14} className="id" />}
-                    </button>
-                  ))}
-                  {!state?.projects.length && <div className="hint" style={{ padding: 10 }}>No projects yet.</div>}
-                </div>
-              )}
-            </div>
             <button className="icon-btn sm attach" onClick={() => fileInput.current?.click()} aria-label="Attach files" title="Attach files (or drop or paste them)"><Paperclip size={16} /></button>
             <input ref={fileInput} type="file" multiple hidden onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ""; }} />
-            <RepoComposerMenu chatId={cid} projectId={projectId} ensureChat={ensureChat} />
-            <button className={`pill yolo ${yolo ? "on" : ""}`} onClick={toggleYolo} title={yolo ? "YOLO is on: shell (PowerShell) and other ask-first tools run without asking. Click to turn off." : "Turn on YOLO: run shell (PowerShell) and other ask-first tools without asking."}>
-              <Zap size={15} fill={yolo ? "currentColor" : "none"} /> {yolo ? "YOLO on" : "Ask first"}
-            </button>
             <Slot name="chat.composer" ctx={slotCtx} />
             <div className="spacer" />
             <ModelPicker value={model} onChange={setModel} />

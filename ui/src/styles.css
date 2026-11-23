@@ -668,3 +668,9 @@ textarea.input { resize: vertical; min-height: 96px; line-height: 1.55; }
 .ongoing-body li { display: flex; gap: 6px; align-items: flex-start; }
 .ongoing-body li svg { flex-shrink: 0; margin-top: 3px; color: var(--muted); }
 .ongoing-body .bad { color: var(--bad, #c0392b); }
+
+.gh-btn { position: relative; }
+.gh-btn.on { background: var(--surface-3); }
+.gh-btn .gh-dot { position: absolute; right: 5px; bottom: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--good, #2ea043); box-shadow: 0 0 0 2px var(--bg); }
+.topbar .pill-label { max-width: 160px; }
+@media (max-width: 720px) { .topbar .pill-label { max-width: 90px; } .topbar .pill.yolo .yolo-text { display: none; } }
