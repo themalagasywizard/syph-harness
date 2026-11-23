@@ -23,7 +23,7 @@ export function SettingsView() {
   }, [profileRef]);
 
   if (!cfg || !state) return null;
-  const agent = cfg.agent ?? { maxSteps: 40 };
+  const agent = cfg.agent ?? {};
   const patch = async (p: Partial<Config> | Record<string, unknown>) => {
     await api.put("/settings", p);
     refresh();
@@ -152,13 +152,17 @@ export function SettingsView() {
         <div className="section-label" style={{ paddingLeft: 0 }}>Long tasks</div>
         <div className="list" style={{ marginBottom: 32 }}>
           {([
-            ["maxSteps", "Steps per run", "Tool steps before a run pauses with a status and a Continue button.", 1, 500],
-            ["maxUsdPerRun", "Spend per run (USD)", "0 means no cap. The daily budgets below still apply.", 0, 50],
-            ["maxMinutes", "Minutes per run", "0 means no cap.", 0, 600],
+            ["shortSteps", "Steps for a quick request", "Past this, Syph is asked to plan the rest. A plan of three or more steps, or an approved contract, makes it a long task.", 5, 500],
+            ["maxUsdPerRun", "Spend for a quick request (USD)", "0 means no cap.", 0, 50],
+            ["maxMinutes", "Minutes for a quick request", "0 means no cap.", 0, 600],
+            ["longSteps", "Steps for a long task", "0 means no cap: it keeps going until the work is done, like Claude Code.", 0, 100000],
+            ["longMinutes", "Minutes for a long task", "0 means no cap. Runs can go for hours.", 0, 100000],
+            ["maxUsdPerLongRun", "Spend for a long task (USD)", "0 means no cap. The daily chat budget below still applies: raise it for long runs.", 0, 1000],
+            ["reviewAfterErrors", "Review a run after this many failed calls", "Syph works out what it was missing and proposes a fix (a tool, a skill, a rule) in Evolve. 0 turns this off.", 0, 100],
           ] as const).map(([key, name, sub, min, max]) => (
             <div className="row" style={{ gridTemplateColumns: "1fr 120px" }} key={key}>
               <div><div className="name">{name}</div><div className="sub">{sub}</div></div>
-              <input className="input" type="number" min={min} max={max} step={key === "maxUsdPerRun" ? 0.1 : 1} value={agent[key] ?? 0} onChange={(e) => patch({ agent: { ...agent, [key]: Number(e.target.value) } })} />
+              <input className="input" type="number" min={min} max={max} step={key === "maxUsdPerRun" || key === "maxUsdPerLongRun" ? 0.1 : 1} value={agent[key] ?? 0} onChange={(e) => patch({ agent: { ...agent, [key]: Number(e.target.value) } })} />
             </div>
           ))}
           <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>

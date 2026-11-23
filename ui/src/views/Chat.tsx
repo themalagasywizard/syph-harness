@@ -288,7 +288,7 @@ function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, sta
         )}
         {streaming && turn.content && <span className="caret" />}
         {streaming && <StatusLine status={status} elapsed={elapsed} current={running ? callLabel(running) : undefined} />}
-        {!streaming && <RecapLine recap={turn.recap} />}
+        {!streaming && <RecapLine recap={turn.recap} review={turn.review} />}
         {!streaming && last && <StopCard reason={turn.stopReason} onContinue={(m) => onSend?.(m)} disabled={busy} />}
         {!streaming && (
           <div className="msg-actions">
@@ -374,6 +374,13 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   useEffect(() => {
     if (!model && state) setModel(state.config.defaults.chatModel);
   }, [state, model]);
+
+  // A mistake review finishes in the background: pick up its result when the app says chats changed.
+  const { tick } = useApp();
+  useEffect(() => {
+    if (!cid || live || !chat?.turns.some((t) => t.review?.status === "running")) return;
+    api.get<Chat>(`/chats/${cid}`).then((c) => !c.running && setChat(c)).catch(() => {});
+  }, [tick]);
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight });

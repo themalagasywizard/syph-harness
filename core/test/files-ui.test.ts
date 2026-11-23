@@ -59,11 +59,13 @@ test("a run's new and changed files are tracked with full paths, from write_file
   const events: any[] = [];
   const turn = await h.chat(chat.id, "make the report", { emit: (e) => events.push(e) });
   const paths = (turn.files ?? []).map((f) => f.path);
-  assert.deepEqual(paths.sort(), [join(folder, "reports", "out.txt"), join(folder, "scripts", "build.py")].sort());
+  // The helper script isn't a deliverable, so the answer shows only the report.
+  assert.deepEqual(paths, [join(folder, "reports", "out.txt")]);
   assert.ok(turn.files!.every((f) => f.action === "created" && f.size > 0));
   assert.equal(turn.files!.find((f) => f.name === "out.txt")!.rel, "reports/out.txt");
-  assert.equal(events.filter((e) => e.type === "files").length, 2, "one event per tool that wrote something");
-  assert.equal(store.getChat(home, chat.id)!.turns.at(-1)!.files!.length, 2, "saved with the answer");
+  assert.equal(events.filter((e) => e.type === "files").length, 1, "one event per tool that wrote a deliverable");
+  assert.equal(store.getChat(home, chat.id)!.turns.at(-1)!.files!.length, 1, "saved with the answer");
+  assert.ok(canAccess(home, join(folder, "scripts", "build.py")), "hidden files can still be opened");
   assert.ok(canAccess(home, paths[0]));
   assert.equal(canAccess(home, home.path(".env")), false);
   assert.equal(canAccess(home, home.path("secrets", "connectors.json")), false);

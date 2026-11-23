@@ -31,8 +31,21 @@ import { id, now } from "./util.ts";
 import { FileIndex, changedFiles, mentionedFiles, snapshot } from "./files/index.ts";
 import { actionAt, checkUi, fillTemplate, flattenItem, getUi, itemsFrom, uiAgentTools, uiPrompt, type UiButton, type UiEnv } from "./ui-ext.ts";
 import type { FileRef, RepoLink } from "./types.ts";
-import { resolve, relative, sep, isAbsolute } from "node:path";
+import { resolve, relative, sep, isAbsolute, extname } from "node:path";
+import { mistakes, needsReview, reviewRun } from "./evolve/review.ts";
 import { attachmentsForModel, saveAttachment } from "./attachments.ts";
+
+/** Files people read: shown in the answer. Code and data files are shown only when the user asked for them. */
+const READABLE = /\.(md|markdown|txt|pdf|docx?|odt|rtf|xlsx?|ods|csv|tsv|pptx?|odp|key|html?|png|jpe?g|gif|webp|svg|bmp|mp3|wav|m4a|mp4|mov|webm|zip)$/i;
+const SCRATCH = /(^|[\\/])(node_modules|__pycache__|\.cache|\.venv|venv|tmp|temp|scratch|\.git)[\\/]/i;
+export function showInChat(path: string, request: string) {
+  if (SCRATCH.test(path)) return false;
+  if (READABLE.test(path)) return true;
+  const ext = extname(path).slice(1).toLowerCase();
+  // Only an explicit ask for code ("write a script…", "give me the JSON") counts, or naming the file type.
+  const wantsCode = /\b(write|create|make|build|generate|give me|send me|export|save)\b[^.?!\n]{0,60}\b(scripts?|code|programs?|functions?|modules?|snippets?|cli|json|yaml|config files?)\b/i.test(request);
+  return wantsCode || (!!ext && new RegExp(`\\.${ext}\\b|\\b${ext}\\b`, "i").test(request));
+}
 
 /** The command a shell-like call would run, for allow-lists. */
 const commandOf = (tool: string, args: unknown) => (tool === "shell" && args && typeof (args as { command?: unknown }).command === "string" ? ((args as { command: string }).command).trim() : null);
@@ -101,6 +114,8 @@ export class Harness {
   private live = new Map<string, LiveRun>();
   readonly jobs = new Map<string, Job>();
   private listeners = new Set<Listener>();
+  /** When each chat last had its mistakes reviewed (at most one review per chat every 20 minutes). */
+  private lastReview = new Map<string, number>();
   /** App connectors (Google Workspace, and any the agent writes). */
   readonly connectors: Connectors;
 
@@ -507,6 +522,16 @@ export class Harness {
     return ctxRef;
   }
 
+  /** Record how a mistake review ended on the turn it was about, so the chat can link to the proposal. */
+  private finishReview(chatId: string, turnId: string, review: NonNullable<Turn["review"]>) {
+    const c = store.getChat(this.home, chatId);
+    const t = c?.turns.find((x) => x.id === turnId);
+    if (!c || !t) return;
+    t.review = review;
+    store.saveChat(this.home, c);
+    this.broadcast({ type: "chats" });
+  }
+
   /** Done-when checks are shell commands the model wrote: they run only when the shell would. */
   private allowCheck(command: string, approve: ToolContext["approve"]) {
     return approve("shell", { command }, `Syph wants to run a done-when check: ${command}`);
@@ -566,11 +591,13 @@ export class Harness {
         const call = turn.toolCalls!.find((c) => c.id === e.id);
         found.push(...mentionedFiles(`${JSON.stringify(call?.args ?? "")}\n${e.result}`, started, new Set([...next.keys(), ...files.keys()])));
       }
-      const fresh = found.map((f) => ({ ...f, action: files.get(f.path)?.action === "created" ? ("created" as const) : f.action }));
+      new FileIndex(this.home).add(found.map((f) => f.path));
+      // Only deliverables are shown: documents, sheets, decks, images. The scripts and data files the
+      // agent writes along the way stay out of the answer unless the user asked for code.
+      const fresh = found.filter((f) => showInChat(f.rel ?? f.path, text)).map((f) => ({ ...f, action: files.get(f.path)?.action === "created" ? ("created" as const) : f.action }));
       if (!fresh.length) return;
       for (const f of fresh) files.set(f.path, f);
       turn.files = [...files.values()];
-      new FileIndex(this.home).add(fresh.map((f) => f.path));
       relay({ type: "files", files: fresh });
     };
     const relay = (e: AgentEvent) => {
@@ -620,12 +647,18 @@ export class Harness {
       for (const t of chat.loadedTools ?? []) ctx.loadedTools!.add(t);
       const tools = drafting ? this.tools().pick(DRAFT_TOOLS) : this.tools();
       const strategy = getStrategy(profile.strategy);
+      // Long task: an approved contract, or a plan of three or more steps. It then runs to completion.
+      const isLong = () => {
+        if (drafting) return false;
+        const c = readProgress(this.home, key).contract;
+        return (!!c && !c.draft) || (turn.plan?.length ?? 0) >= 3;
+      };
       const inbox = () => {
         const queued = this.live.get(chatId)?.inbox.splice(0) ?? [];
         if (queued.length) turn.steering = [...(turn.steering ?? []), ...queued];
         return queued;
       };
-      let result = await strategy.run({ home: this.home, model, request: text, messages: [{ role: "system", content: system }, ...history], tools, ctx, category: "chat", signal: opts.signal, emit: relay, inbox });
+      let result = await strategy.run({ home: this.home, model, request: text, messages: [{ role: "system", content: system }, ...history], tools, ctx, category: "chat", signal: opts.signal, emit: relay, inbox, isLong });
       addUsage(usage, result.usage);
 
       // Sensors: when the work changed something and the contract has commands, the harness runs
@@ -645,7 +678,7 @@ export class Harness {
           break;
         }
         relay({ type: "note", text: `${checks.filter((c) => c.status === "fail").length} check(s) failed. Fixing.`, reset: true });
-        const again = await strategy.run({ home: this.home, model, request: text, messages: [...result.messages, { role: "user", content: failedChecksMessage(checks) }], tools, ctx, category: "chat", signal: opts.signal, emit: relay, inbox });
+        const again = await strategy.run({ home: this.home, model, request: text, messages: [...result.messages, { role: "user", content: failedChecksMessage(checks) }], tools, ctx, category: "chat", signal: opts.signal, emit: relay, inbox, isLong });
         addUsage(usage, again.usage);
         changed = wrote(again);
         result = { ...again, added: [...result.added, ...again.added], toolsCalled: [...result.toolsCalled, ...again.toolsCalled] };
@@ -665,6 +698,20 @@ export class Harness {
       turn.usage = usage;
       turn.recap = recapOf(turn, result.stopReason);
       if (result.stopReason === "repeated_error") updateProgress(this.home, key, (p) => p.blocked.push(`Run stopped: ${result.content.split("\n")[0].slice(0, 200)}`));
+      // Too many mistakes: have the reflector find the missing harness part and propose it in Evolve.
+      if (needsReview(this.home, turn) && Date.now() - (this.lastReview.get(chatId) ?? 0) > 20 * 60_000) {
+        this.lastReview.set(chatId, Date.now());
+        turn.review = { status: "running", mistakes: mistakes(turn).length };
+        const reviewed = { ...turn };
+        this.startJob("evolve", `Review ${mistakes(turn).length} mistakes in “${chat.title}”`, async (log) => {
+          log("Looking for what Syph was missing…");
+          const r = await reviewRun(this.home, { model, runId: trace.runId, request: text, turn: reviewed });
+          this.finishReview(chatId, turn.id, r.proposal ? { status: "proposed", mistakes: reviewed.review!.mistakes, proposalId: r.proposal.id, title: r.proposal.title } : { status: "none", mistakes: reviewed.review!.mistakes, note: r.diagnosis });
+          if (r.proposal) this.broadcast({ type: "proposal", id: r.proposal.id });
+          log(r.proposal ? `Proposed: ${r.proposal.title}. It waits for you in Evolve.` : `No change proposed: ${r.diagnosis}`);
+          return r.proposal?.id ?? null;
+        });
+      }
       trace.finish({ status: "ok", output: result.content, ...usage });
       relay({ type: "run_end", runId: trace.runId, content: result.content, usage, status: "ok", stopReason: result.stopReason, recap: turn.recap, question: turn.question });
     } catch (e) {
@@ -678,7 +725,9 @@ export class Harness {
     turn.durationMs = Date.now() - started;
     const fresh = store.getChat(this.home, chatId);
     if (!fresh) return turn; // deleted while it ran
-    fresh.turns = [...chat.turns, turn];
+    // Start from what is on disk: a mistake review may have updated an earlier turn meanwhile.
+    const known = new Set(fresh.turns.map((t) => t.id));
+    fresh.turns = [...fresh.turns, ...chat.turns.filter((t) => !known.has(t.id)), turn];
     fresh.history = chat.history;
     fresh.title = chat.title;
     fresh.model = model;

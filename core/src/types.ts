@@ -135,7 +135,18 @@ export interface SyphConfig {
   killSwitch: boolean;
   mcpServers: { name: string; command: string; args?: string[]; env?: Record<string, string> }[];
   agent: {
-    maxSteps: number;
+    /** Old single step budget; no longer used (see shortSteps / longSteps). */
+    maxSteps?: number;
+    /** Step budget for ordinary requests. Past it, the agent is asked to plan the rest as a long task. */
+    shortSteps?: number;
+    /** Step cap for long tasks (0: none; they run until done). */
+    longSteps?: number;
+    /** Time cap for long tasks in minutes (0: none). */
+    longMinutes?: number;
+    /** Spend cap for one long task in USD (0: none; the daily budget still applies). */
+    maxUsdPerLongRun?: number;
+    /** Failed tool calls in one run that make the harness review the run and propose a fix in Evolve (0: off). */
+    reviewAfterErrors?: number;
     /** Spend cap for one run, in USD (0: none). When hit, the run pauses and the user can Continue. */
     maxUsdPerRun?: number;
     /** Time cap for one run, in minutes (0: none). */
@@ -218,6 +229,8 @@ export interface Turn {
   recap?: Recap;
   /** Messages the user sent while this answer was being worked on. */
   steering?: string[];
+  /** A review of this run's mistakes, filed in Evolve as a proposal. */
+  review?: { status: "running" | "proposed" | "none"; mistakes: number; proposalId?: string; title?: string; note?: string };
   /** Files the user attached to this message (user turns). */
   attachments?: Attachment[];
   usage?: Usage;

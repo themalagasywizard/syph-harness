@@ -3,7 +3,7 @@
 // the exits, though: a budget, a stop on repeated errors, and room for the user to steer.
 import { historyTokens, shrinkToolResults } from "./context.ts";
 import type { Home } from "./home.ts";
-import { complete, type BudgetCategory } from "./providers/llm.ts";
+import { BudgetError, complete, type BudgetCategory } from "./providers/llm.ts";
 import { getProfile } from "./providers/models.ts";
 import type { ToolRegistry } from "./tools/registry.ts";
 import type { ToolContext } from "./tools/types.ts";
@@ -16,8 +16,10 @@ export interface AgentRun {
   messages: ChatMessage[];
   tools?: ToolRegistry;
   ctx?: ToolContext;
-  /** Step budget. Defaults to config agent.maxSteps. */
+  /** Fixed step budget (evals, sub-agents). When unset, the short/long budgets from config apply. */
   maxSteps?: number;
+  /** Whether this run is a long task (an approved contract, a plan of several steps, long-task mode). Checked every step. */
+  isLong?: () => boolean;
   /** Spend and time budget for this run (defaults from config agent.maxUsdPerRun / maxMinutes). */
   budget?: { usd?: number; minutes?: number };
   temperature?: number;
@@ -62,9 +64,18 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
   const usage = emptyUsage();
   const toolsCalled: string[] = [];
   const config = run.home.config();
-  const maxSteps = run.maxSteps ?? config.agent.maxSteps;
-  const maxUsd = run.budget?.usd ?? config.agent.maxUsdPerRun ?? 0;
-  const maxMs = (run.budget?.minutes ?? config.agent.maxMinutes ?? 0) * 60_000;
+  const a = config.agent;
+  // Short requests get a modest budget. Long tasks (detected each step) run until they are done,
+  // like a coding agent: only their own caps, the daily budget and the exits below stop them.
+  const fixed = run.maxSteps !== undefined;
+  let long = false;
+  let graceUntil = 0;
+  const limits = () => {
+    long = !fixed && !!run.isLong?.();
+    return long
+      ? { steps: a.longSteps ?? 0, usd: run.budget?.usd ?? a.maxUsdPerLongRun ?? 0, ms: (run.budget?.minutes ?? a.longMinutes ?? 0) * 60_000 }
+      : { steps: run.maxSteps ?? a.shortSteps ?? 30, usd: run.budget?.usd ?? a.maxUsdPerRun ?? 0, ms: (run.budget?.minutes ?? a.maxMinutes ?? 0) * 60_000 };
+  };
   const window = getProfile(run.home, run.model).contextWindow;
   const specs = () => (run.tools && run.ctx ? run.tools.specs(run.ctx) : undefined);
   const started = Date.now();
@@ -76,6 +87,7 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
   let endTurn: { reason: StopReason; question?: AgentResult["question"] } | null = null;
   const ctx: ToolContext | undefined = run.ctx && { ...run.ctx, hooks: { ...run.ctx.hooks, endTurn: (q) => void (endTurn = { reason: "question", question: q }) } };
   const calls = new Map<string, number>();
+  let stuckCount = 0;
   const failures = new Map<string, number>();
   let finalNudge: string | null = null;
 
@@ -92,11 +104,20 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
 
     // Exits the harness owns: the step, spend and time budget.
     if (!finalNudge) {
-      const over =
-        step > maxSteps ? `${maxSteps} steps` : maxUsd > 0 && usage.costUsd >= maxUsd ? `$${maxUsd.toFixed(2)} of spend` : maxMs > 0 && Date.now() - started >= maxMs ? `${Math.round(maxMs / 60_000)} minutes` : null;
-      if (over) {
-        stopReason = "budget";
-        finalNudge = `You have reached this run's budget (${over}). Stop working now. Reply with a short status: what is done, what is left, and the next step. Your progress is saved, and the user can press Continue.`;
+      const lim = limits();
+      const stepsOver = lim.steps > 0 && step > lim.steps && step > graceUntil;
+      // A short request that turns out to be big: ask the model to plan the rest (which makes it a
+      // long task) instead of stopping the user with a Continue button.
+      if (stepsOver && !long && !fixed && run.isLong && !graceUntil) {
+        graceUntil = step + 10;
+        messages.push({ role: "user", content: `[Harness] This request has taken ${lim.steps} steps. If more work remains, call update_plan now with the remaining steps (that switches you to long-task mode and you keep going until it's done). If you are done, give the final answer.` });
+        emit({ type: "note", text: "This is taking a while: asking Syph to plan the rest." });
+      } else {
+        const over = stepsOver ? `${lim.steps} steps` : lim.usd > 0 && usage.costUsd >= lim.usd ? `$${lim.usd.toFixed(2)} of spend` : lim.ms > 0 && Date.now() - started >= lim.ms ? `${Math.round(lim.ms / 60_000)} minutes` : null;
+        if (over) {
+          stopReason = "budget";
+          finalNudge = `You have reached this run's budget (${over}). Stop working now. Reply with a short status: what is done, what is left, and the next step. Your progress is saved, and the user can press Continue.`;
+        }
       }
     }
     const lastStep = !!finalNudge;
@@ -107,18 +128,32 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
     if (used > window * 0.6) {
       messages = shrinkToolResults(messages, 6, 1200);
       if (historyTokens(messages) > window * 0.8) messages = shrinkToolResults(messages, 2, 300);
+      // Hours-long runs outgrow even stubs: fold the older middle of the run into a summary.
+      // The contract and progress live in the system prompt and the progress file, so they survive.
+      if (historyTokens(messages) > window * 0.7) messages = await foldMiddle(run, messages, start, usage);
       emit({ type: "note", text: "Trimmed older tool output to keep the context small." });
     }
 
-    const res = await complete(run.home, {
-      model: run.model,
-      messages,
-      tools: lastStep ? undefined : specs(),
-      temperature: run.temperature,
-      category: run.category,
-      signal: run.signal,
-      onToken: (t) => emit({ type: "token", text: t }),
-    });
+    let res;
+    try {
+      res = await complete(run.home, {
+        model: run.model,
+        messages,
+        tools: lastStep ? undefined : specs(),
+        temperature: run.temperature,
+        category: run.category,
+        signal: run.signal,
+        onToken: (t) => emit({ type: "token", text: t }),
+      });
+    } catch (e) {
+      // The daily budget ran out mid-run: end with a status, not an error, so the work can resume.
+      if (!(e instanceof BudgetError) || step === 1) throw e;
+      stopReason = "budget";
+      const text = `Paused: ${e.message} Progress so far is saved; raise the daily budget in Settings or continue tomorrow.`;
+      messages.push({ role: "assistant", content: text });
+      emit({ type: "token", text });
+      return result(text);
+    }
     addUsage(usage, res);
     lastPrompt = res.promptTokens;
     emit({ type: "step", step, usage: { promptTokens: res.promptTokens, completionTokens: res.completionTokens, costUsd: res.costUsd } });
@@ -184,10 +219,41 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
       emit({ type: "token", text });
       return result(text);
     }
-    if (stuck && !finalNudge) {
+    if (stuck && !finalNudge && long && ++stuckCount < 3) {
+      // Long tasks don't stop at the first wall: record it and try another way. Three walls stop it.
+      calls.clear();
+      failures.clear();
+      emit({ type: "note", text: `Hit the same problem again (${stuck}). Trying a different approach.` });
+      messages.push({ role: "user", content: `[Harness] ${stuck}. Repeating it won't work. Record this as a dead end with note_progress, then try a different approach. If nothing else can work without the user, call ask_user.` });
+    } else if (stuck && !finalNudge) {
       stopReason = "repeated_error";
       emit({ type: "note", text: `Stopped retrying: ${stuck}.` });
       finalNudge = `Stop: ${stuck}. Another attempt will not be different, because something is missing. Do not call more tools. Reply to the user with what you tried, the exact error, and the fact or decision you need from them to continue.`;
     }
+  }
+}
+
+/** Replace the older part of this run (after the request) with a summary, keeping the recent steps whole. */
+async function foldMiddle(run: AgentRun, messages: ChatMessage[], start: number, usage: Usage): Promise<ChatMessage[]> {
+  let cut = messages.length - 8;
+  // Never split a tool call from its results: cut just before an assistant message.
+  while (cut > start && messages[cut]?.role !== "assistant") cut--;
+  if (cut <= start + 2) return messages;
+  const middle = messages.slice(start, cut);
+  const text = middle.map((m) => `${m.role}${m.name ? `(${m.name})` : ""}: ${(m.content ?? "").slice(0, 1500)}${m.tool_calls ? ` [called ${m.tool_calls.map((c) => `${c.function.name} ${c.function.arguments.slice(0, 200)}`).join("; ")}]` : ""}`).join("\n").slice(0, 60_000);
+  try {
+    const r = await complete(run.home, {
+      model: run.model,
+      category: run.category,
+      signal: run.signal,
+      messages: [
+        { role: "system", content: "Summarise this stretch of an agent's work so it can carry on: what was done (files, commands, results), decisions, dead ends, and what was about to happen next. Keep paths, names and numbers exact. Be concise." },
+        { role: "user", content: text },
+      ],
+    });
+    addUsage(usage, r);
+    return [...messages.slice(0, start), { role: "user", content: `[Summary of earlier steps in this run]\n${r.content}` }, { role: "assistant", content: "Understood. Continuing." }, ...messages.slice(cut)];
+  } catch {
+    return messages;
   }
 }

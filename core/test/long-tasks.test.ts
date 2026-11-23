@@ -301,3 +301,56 @@ test("scope globs, repo maps and the Tasks command allow-list", async () => {
   const out = store.getChat(home, store.listTasks(home)[0].lastChatId!)!.turns.at(-1)!.content;
   assert.match(out, /exit code: 0[\s\S]*declined/);
 });
+
+test("short requests nudge at 30 steps; planned long tasks run to completion", async () => {
+  const home = tempHome();
+  const h = await new Harness(home).init({ mcp: false });
+  let n = 0;
+  let nudged = false;
+  mock("main", (req) => {
+    if (req.messages.some((m) => m.role === "user" && m.content?.startsWith("[Harness] This request has taken"))) nudged = true;
+    const u = req.messages[req.messages.findLastIndex((m) => m.role === "user" && !m.content?.startsWith("[Harness]"))].content ?? "";
+    n++;
+    if (/big job/.test(u)) {
+      if (n === 1) return reply("", [call("update_plan", { steps: [{ text: "a", status: "in_progress" }, { text: "b" }, { text: "c" }] })]);
+      return n < 75 ? reply("", [call("search_files", { pattern: `p${n}` })]) : reply("All done.");
+    }
+    return nudged ? reply("Done, it was smaller than it looked.") : reply("", [call("search_files", { pattern: `q${n}` })]);
+  });
+  const chat = store.createChat(home, {});
+  const small = await h.chat(chat.id, "quick look");
+  assert.ok(nudged, "asked to plan at the short budget");
+  assert.equal(small.stopReason, undefined);
+  assert.equal(small.content, "Done, it was smaller than it looked.");
+  n = 0;
+  nudged = false;
+  const big = await h.chat(chat.id, "a big job");
+  assert.equal(big.stopReason, undefined, "a long task isn't paused for Continue");
+  assert.ok(n >= 75);
+  assert.ok(!nudged);
+});
+
+test("a run with many mistakes is reviewed and a fix is proposed in Evolve", async () => {
+  const home = tempHome();
+  const h = await new Harness(home).init({ mcp: false });
+  mock("main", (req) => {
+    const t = req.messages.filter((m) => m.role === "tool").length;
+    return t < 4 ? reply("", [call("read_file", { path: `missing-${t}.csv` })]) : reply("I couldn't find the data.");
+  });
+  let seen = "";
+  mock("reflector", (req) => {
+    seen = req.messages.map((m) => m.content).join("\n");
+    return reply(JSON.stringify({ diagnosis: "It guessed file names instead of listing the folder.", question: "do", kind: "skill", title: "Add a find-data-files skill", reason: "List before reading.", files: [{ path: "skills/find-data-files/SKILL.md", content: "---\nname: find-data-files\ndescription: Find data files before reading them\n---\n1. list_files first.\n" }] }));
+  });
+  const chat = store.createChat(home, {});
+  const turn = await h.chat(chat.id, "summarise my sales data");
+  assert.equal(turn.review?.status, "running");
+  for (let i = 0; i < 50 && store.getChat(home, chat.id)!.turns.at(-1)!.review?.status === "running"; i++) await new Promise((r) => setTimeout(r, 10));
+  const review = store.getChat(home, chat.id)!.turns.at(-1)!.review!;
+  assert.equal(review.status, "proposed");
+  assert.match(seen, /FAILED read_file/);
+  const p = h.proposals().find((x) => x.id === review.proposalId)!;
+  assert.equal(p.kind, "skill");
+  assert.equal(p.status, "pending");
+  assert.match(p.reason, /listing the folder/);
+});

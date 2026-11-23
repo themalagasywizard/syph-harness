@@ -15,5 +15,5 @@
   "evolve": { "samplesPerCase": 2, "maxAttempts": 3, "heldOutFraction": 0.2 },
   "killSwitch": false,
   "mcpServers": [],
-  "agent": { "maxSteps": 40, "maxUsdPerRun": 0.5, "maxMinutes": 30, "gitCheckpoints": true, "lazyTools": true }
+  "agent": { "shortSteps": 30, "maxUsdPerRun": 0.5, "maxMinutes": 30, "longSteps": 0, "longMinutes": 0, "maxUsdPerLongRun": 0, "reviewAfterErrors": 4, "gitCheckpoints": true, "lazyTools": true }
 }

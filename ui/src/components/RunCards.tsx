@@ -2,8 +2,8 @@
 // the checks agree (contract card), what it needs from you (question and continue cards), and
 // what actually happened (recap). Everything shown here comes from the harness, not the model.
 import { useEffect, useState } from "react";
-import { AlertTriangle, CircleCheck, CircleDashed, CircleX, FileDiff, Flag, HelpCircle, Loader2, PauseCircle, Pencil, Play, Plus, Trash2, X } from "lucide-react";
-import { api, type CheckResult, type Contract, type Progress, type Recap, type RunStatus, type StopReason } from "../api";
+import { AlertTriangle, CircleCheck, CircleDashed, CircleX, FileDiff, Flag, HelpCircle, Loader2, PauseCircle, Pencil, Play, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { api, type CheckResult, type Contract, type Progress, type Recap, type RunStatus, type StopReason, type Turn } from "../api";
 
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n));
 const money = (usd: number) => (usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`);
@@ -183,7 +183,7 @@ export function StopCard({ reason, onContinue, disabled }: { reason?: StopReason
 }
 
 /** Facts about the run, so "done" never rests on the answer's own word. */
-export function RecapLine({ recap }: { recap?: Recap }) {
+export function RecapLine({ recap, review }: { recap?: Recap; review?: Turn["review"] }) {
   if (!recap || (!recap.toolCalls && !recap.filesChanged && !recap.checks)) return null;
   const bits: React.ReactNode[] = [];
   if (recap.filesChanged) bits.push(<span key="f">{recap.filesChanged} file{recap.filesChanged === 1 ? "" : "s"} changed</span>);
@@ -194,6 +194,14 @@ export function RecapLine({ recap }: { recap?: Recap }) {
       <div className="recap-facts">{bits}</div>
       {recap.unfinished.length > 0 && (
         <div className="recap-left"><span className="hint">Not finished:</span> {recap.unfinished.slice(0, 4).join(" · ")}{recap.unfinished.length > 4 ? ` · +${recap.unfinished.length - 4} more` : ""}</div>
+      )}
+      {review && (
+        <div className={`review-line ${review.status}`}>
+          {review.status === "running" ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+          {review.status === "running" && <span>{review.mistakes} tool calls failed in this run. Syph is working out what it was missing so it can propose a fix…</span>}
+          {review.status === "proposed" && <span>{review.mistakes} tool calls failed, so Syph proposed a fix: <a href="#/evolve">{review.title ?? "see Evolve"}</a>. It waits for your approval in Evolve.</span>}
+          {review.status === "none" && <span>{review.mistakes} tool calls failed. Syph reviewed them and found nothing to change in itself{review.note ? `: ${review.note}` : "."}</span>}
+        </div>
       )}
     </div>
   );

@@ -28,6 +28,7 @@ export interface Turn {
   steering?: string[];
   attachments?: Attachment[];
   usage?: Usage;
+  review?: { status: "running" | "proposed" | "none"; mistakes: number; proposalId?: string; title?: string; note?: string };
   createdAt: string;
 }
 
@@ -260,7 +261,7 @@ export interface Config {
   defaults: { chatModel: string; taskModel: string; reflectorModel: string; judgeModel: string };
   budgets: { dailyUsd: { chat: number; tasks: number; evolve: number } };
   approval: { autoAccept: { memory: boolean; skill: boolean }; yolo?: boolean; yoloTasks?: boolean; allowCommands?: string[]; taskCommands?: string[] };
-  agent?: { maxSteps: number; maxUsdPerRun?: number; maxMinutes?: number; gitCheckpoints?: boolean; lazyTools?: boolean };
+  agent?: { shortSteps?: number; maxUsdPerRun?: number; maxMinutes?: number; longSteps?: number; longMinutes?: number; maxUsdPerLongRun?: number; reviewAfterErrors?: number; gitCheckpoints?: boolean; lazyTools?: boolean };
   evolve: { samplesPerCase: number; maxAttempts: number; heldOutFraction: number };
   killSwitch: boolean;
   hasOpenRouterKey: boolean;
