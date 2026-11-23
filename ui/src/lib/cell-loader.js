@@ -9,6 +9,7 @@
  *   state     idle | loading | streaming        (default: idle; "thinking" = loading)
  *   size      number in CSS px (default 64), or size the element with CSS width/height
  *   no-birth  skip the "coming alive" growth sequence when it mounts
+ *   settle    mount mid-swim and spring back into the exact mark (use when a reply has just finished)
  *
  * CSS custom properties (read from the element, so they cascade)
  *   --cell-ink    body colour            (default: currentColor)
@@ -18,6 +19,8 @@
  * JS
  *   el.state = 'streaming'
  *   el.rebirth()            replay the growth sequence
+ *   el.pulse()              one heartbeat: call it for each chunk of streamed text
+ *   el.settle()             spring back into the exact mark
  */
 (() => {
   if (typeof window === 'undefined' || customElements.get('cell-loader')) return;
@@ -30,9 +33,9 @@
   const SPREAD_T = 48;        // SDF range in texels (= 0.1875 in shader space)
 
   const STATES = {
-    idle:      { energy: 0.22, vel: 0.10,  stream: 0, load: 0.1 },
-    loading:   { energy: 0.70, vel: -0.42, stream: 0, load: 1 },
-    streaming: { energy: 1.00, vel: 0.95,  stream: 1, load: 0 },
+    idle:      { energy: 0.22, vel: 0.10,  stream: 0, load: 0.1, swim: 0 },
+    loading:   { energy: 0.70, vel: -0.42, stream: 0, load: 1,   swim: 0.8 },
+    streaming: { energy: 1.00, vel: 0.95,  stream: 1, load: 0,   swim: 0.6 },
   };
   STATES.thinking = STATES.loading;
   const LABELS = { idle: 'Ready', loading: 'Thinking', thinking: 'Thinking', streaming: 'Generating response' };
@@ -183,7 +186,7 @@
 precision highp float;
 varying vec2 vP;
 uniform sampler2D uF;
-uniform float uT, uGrow, uPhase, uEnergy, uStream, uLoad, uPx, uDetail, uCalm, uSpark;
+uniform float uT, uGrow, uPhase, uEnergy, uStream, uLoad, uPx, uDetail, uCalm, uSpark, uSwim, uPulse, uSpring, uLock;
 uniform vec3 uInk, uGlow, uHalo;
 const float SPREAD = 0.1875;
 const float TAU = 6.2831853;
@@ -212,14 +215,22 @@ void main(){
   float hb = pow(max(0.0, sin(t*2.4)), 12.0) + 0.55*pow(max(0.0, sin(t*2.4 - 0.7)), 12.0);
 
   // living deformation: breath, slow swirl, cytoplasmic wobble
-  float breath = 1.0 + motion*(0.014*sin(t*1.15) + 0.02*hb*uLoad);
+  float breath = (1.0 + motion*(0.014*sin(t*1.15) + 0.02*hb*uLoad)) * (1.0 + uSpring*0.06);
   vec2 q = p / breath;
+
+  // swim: tendrils curl and sway, spokes stretch in turn, the nucleus beats on each chunk of text
+  float swim = uSwim * (0.2 + 0.8*motion);
+  float sr = length(q), sa = atan(q.y, q.x);
+  float sway = swim*sr*(0.42*sin(sr*7.5 - t*2.3) + 0.16*sin(t*1.3 + 3.0*sa));
+  float sa2 = sa + sway*(0.65 + 0.35*sin(4.0*sa + t*0.9));
+  float stretch = 1.0 - (swim*0.16*sin(4.0*sa - t*1.7) + uPulse*0.07)*smoothstep(0.08, 0.6, sr);
+  q = vec2(cos(sa2), sin(sa2))*sr*stretch;
   q = rot(motion*(0.05*sin(t*0.7 + r*3.2) + 0.022*sin(t*1.9 - r*5.0)) * r) * q;
   vec2 wob = vec2(noise(q*2.3 + vec2(t*0.33, 0.0)), noise(q*2.3 + vec2(5.2, -t*0.29))) - 0.5;
   q += wob * motion * (0.012 + 0.008*uStream) * smoothstep(0.05, 0.6, r);
 
   vec2 f = field(q);
-  float d = f.x, g = f.y;
+  float d = f.x - swim*0.006 - uPulse*0.02*exp(-r*r/0.02), g = f.y;
 
   // growth: limbs extend from the nucleus, thin at the growing tip
   float front = uGrow*1.3 - 0.08;
@@ -239,14 +250,14 @@ void main(){
 
   // body colour
   vec3 bodyCol = mix(mix(uInk, uHalo, 0.2 + 0.16*uEnergy), uGlow, clamp(sig*1.15 + tip + nuc*0.9, 0.0, 1.0));
-  bodyCol = mix(bodyCol, uGlow, smoothstep(-0.008, 0.0, dd) * (0.05 + 0.12*uEnergy));
+  bodyCol = mix(bodyCol, uGlow, smoothstep(-0.008, 0.0, dd) * (0.05 + 0.12*uEnergy + 0.8*uLock + 0.3*uPulse));
   bodyCol = mix(bodyCol, uGlow, step(0.993, hash(floor(q*150.0) + floor(t*16.0))) * uStream);
 
   // halo
   float od = max(dd, 0.0);
   float near = exp(-od*30.0);
   float haloA = smoothstep(SPREAD, SPREAD*0.55, od) * smoothstep(0.0, 0.35, uGrow)
-              * (near*(0.14 + 0.8*sig + 0.9*tip + 0.6*nuc) + exp(-od*9.0)*0.1*uEnergy);
+              * (near*(0.14 + 0.8*sig + 0.9*tip + 0.6*nuc + 0.6*uPulse + 0.8*uLock) + exp(-od*9.0)*0.1*uEnergy);
   vec3 haloCol = mix(uHalo, uGlow, near);
 
   // birth spark, its flare already pointing where the spokes will grow
@@ -293,7 +304,7 @@ void main(){
   gl_FragColor = c;
 }`;
 
-  const UNIFORMS = ['uF', 'uT', 'uGrow', 'uPhase', 'uEnergy', 'uStream', 'uLoad', 'uPx', 'uDetail', 'uCalm', 'uSpark', 'uInk', 'uGlow', 'uHalo'];
+  const UNIFORMS = ['uF', 'uT', 'uGrow', 'uPhase', 'uEnergy', 'uStream', 'uLoad', 'uPx', 'uDetail', 'uCalm', 'uSpark', 'uSwim', 'uPulse', 'uSpring', 'uLock', 'uInk', 'uGlow', 'uHalo'];
 
   function initGL(canvas) {
     const gl = canvas.getContext('webgl', {
@@ -364,6 +375,7 @@ void main(){
       this._cur = { ...STATES.idle };
       this._t = 0; this._phase = 0; this._grow = 1; this._spark = 0; this._birthAt = null;
       this._visible = true; this._frameN = 0;
+      this._pulse = 0; this._settleAt = null; this._spring = 0; this._lock = 0;
       this._frame = this._frame.bind(this);
     }
 
@@ -379,7 +391,8 @@ void main(){
       this._canvas.addEventListener('webglcontextlost', this._onLost = (e) => { e.preventDefault(); this._stop(); this._fallback(); });
       this._readColors();
       this._cur = { ...(STATES[this.state] || STATES.idle) };
-      if (!this.hasAttribute('no-birth') && !(reduceMQ && reduceMQ.matches)) this.rebirth();
+      if (this.hasAttribute('settle')) { this._cur.swim = STATES.streaming.swim; this._cur.energy = STATES.streaming.energy; this.settle(); }
+      else if (!this.hasAttribute('no-birth') && !(reduceMQ && reduceMQ.matches)) this.rebirth();
       this._ro = new ResizeObserver(() => this._resize());
       this._ro.observe(this);
       this._io = new IntersectionObserver((es) => { this._visible = es[es.length - 1].isIntersecting; this._sync(); });
@@ -411,6 +424,8 @@ void main(){
     }
 
     rebirth() { this._birthAt = this._t; this._grow = 0; this._spark = 0; }
+    pulse() { this._pulse = 1; }
+    settle() { this._settleAt = this._t; }
 
     _applySize() {
       const s = parseFloat(this.getAttribute('size'));
@@ -449,8 +464,15 @@ void main(){
       this._last = now;
       this._t += dt;
       const tgt = STATES[this.state] || STATES.idle;
-      const k = 1 - Math.exp(-dt * 2.6);
+      const k = 1 - Math.exp(-dt * (this._settleAt != null ? 4.5 : 2.6));
       for (const key in tgt) this._cur[key] += (tgt[key] - this._cur[key]) * k;
+      this._pulse *= Math.exp(-dt * 7);
+      if (this._settleAt != null) {
+        const st = this._t - this._settleAt;
+        this._spring = Math.exp(-st * 4.2) * Math.sin(st * 12);
+        this._lock = Math.exp(-st * 3.2) * (1 - Math.exp(-st * 30));
+        if (st > 2) { this._settleAt = null; this._spring = 0; this._lock = 0; }
+      }
       const calm = reduceMQ && reduceMQ.matches ? 1 : 0;
       this._phase += this._cur.vel * dt * (calm ? 0.4 : 1);
       if (this._birthAt != null) {
@@ -478,6 +500,10 @@ void main(){
       gl.uniform1f(u.uDetail, this._detail ?? 1);
       gl.uniform1f(u.uCalm, calm);
       gl.uniform1f(u.uSpark, this._spark);
+      gl.uniform1f(u.uSwim, this._cur.swim);
+      gl.uniform1f(u.uPulse, this._pulse * this._cur.stream * (calm ? 0.3 : 1));
+      gl.uniform1f(u.uSpring, calm ? 0 : this._spring);
+      gl.uniform1f(u.uLock, this._lock);
       gl.uniform3fv(u.uInk, this._ink);
       gl.uniform3fv(u.uGlow, this._glow);
       gl.uniform3fv(u.uHalo, this._halo);
