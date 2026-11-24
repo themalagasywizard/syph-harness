@@ -257,11 +257,18 @@ export const WEB_PAGE_CHARS = 12_000;
 
 export const webFetch = defineTool({
   name: "web_fetch",
-  description: `Fetch a web page or API URL and return its text (HTML is reduced to readable text), ${WEB_PAGE_CHARS} characters at a time. Pass offset to read further.`,
+  description: `Fast headless HTTP fetch for a web page or JSON API URL (HTML is reduced to readable text), ${WEB_PAGE_CHARS} characters at a time. Prefer web_search + web_fetch (or shell scripts for batch HTTP/DNS/API checks) over the slow visible in-app browser. Pass offset to read further.`,
   schema: z.object({ url: z.string().url(), offset: z.number().int().min(0).default(0) }),
   permission: "auto",
   run: async ({ url, offset }, ctx) => {
-    const res = await fetch(url, { signal: ctx.signal ?? AbortSignal.timeout(20_000), headers: { "user-agent": "Syph/0.1" } });
+    const res = await fetch(url, {
+      signal: ctx.signal ?? AbortSignal.timeout(20_000),
+      headers: {
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        accept: "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+        "accept-language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+      },
+    });
     const type = res.headers.get("content-type") ?? "";
     let text = await res.text();
     if (type.includes("html")) text = htmlToText(text);

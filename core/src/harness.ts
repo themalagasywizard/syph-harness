@@ -25,6 +25,7 @@ import { getStrategy } from "./strategies/index.ts";
 import * as store from "./store.ts";
 import { builtinTools } from "./tools/builtin.ts";
 import { generateImageTool } from "./tools/image.ts";
+import { webSearchTool } from "./tools/search.ts";
 import { browserTools } from "./tools/browser.ts";
 import { BrowserBridge, type BrowserState } from "./browser.ts";
 import { ToolRegistry } from "./tools/registry.ts";
@@ -105,9 +106,9 @@ interface LiveRun {
 }
 
 /** Tools that never write files, so there is nothing to look for after them. */
-const READ_ONLY_TOOLS = new Set(["command_output", "stop_command", "list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_skills", "propose_skill_changes", "list_connectors", "list_ui", "propose_ui_change", "propose_skill", "propose_memory", "create_task", "create_connector", "update_plan", "list_repos", "github_repos", "github_api", "github_pr_create", "browser_open", "browser_inspect", "browser_interact", "browser_close"]);
+const READ_ONLY_TOOLS = new Set(["command_output", "stop_command", "list_files", "read_file", "search_files", "web_search", "web_fetch", "read_skill", "list_skills", "propose_skill_changes", "list_connectors", "list_ui", "propose_ui_change", "propose_skill", "propose_memory", "create_task", "create_connector", "update_plan", "list_repos", "github_repos", "github_api", "github_pr_create", "browser_open", "browser_inspect", "browser_interact", "browser_close"]);
 /** What the agent may use while it drafts a contract in long-task mode: look around, write nothing. */
-const DRAFT_TOOLS = ["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_skills", "list_repos", "github_repos", "list_connectors", "set_contract", "ask_user", "update_plan", "note_progress"];
+const DRAFT_TOOLS = ["list_files", "read_file", "search_files", "web_search", "web_fetch", "read_skill", "list_skills", "list_repos", "github_repos", "list_connectors", "set_contract", "ask_user", "update_plan", "note_progress"];
 const THREAD_PROMPT = `# You are working in a thread
 This chat is a thread the project's coordinator started for one piece of work. Do the work fully here. The user may open this thread and talk to you directly. When you finish, end with a short, factual result: what you did, the files you changed with their paths, and anything left open. The coordinator reads that answer to report back.`;
 const DRAFT_PROMPT = `# Long-task mode: draft the contract first
@@ -207,7 +208,7 @@ export class Harness {
     // GitHub stays loaded: the repo prompt tells the agent to use its tools directly.
     const lazy = this.home.config().agent.lazyTools ? appTools.map((t) => t.name).filter((n) => !n.startsWith("github_")) : [];
     const reg: ToolRegistry = new ToolRegistry(
-      [...builtinTools, generateImageTool, ...browserTools, updatePlanTool, ...longTaskTools, ...(lazy.length ? [findToolsTool((ctx) => reg.hidden(ctx))] : []), ...this.extTools, ...connectorAgentTools(this.connectors, () => this.broadcast({ type: "connectors" })), ...repoTools(this.repoHost), ...uiAgentTools(this.home, () => this.uiEnv()), ...appTools],
+      [...builtinTools, webSearchTool, generateImageTool, ...browserTools, updatePlanTool, ...longTaskTools, ...(lazy.length ? [findToolsTool((ctx) => reg.hidden(ctx))] : []), ...this.extTools, ...connectorAgentTools(this.connectors, () => this.broadcast({ type: "connectors" })), ...repoTools(this.repoHost), ...uiAgentTools(this.home, () => this.uiEnv()), ...appTools],
       this.home.config().toolPermissions ?? {},
       lazy,
     );
@@ -391,7 +392,7 @@ export class Harness {
       ];
       return parts.filter(Boolean).join("\n\n");
     }
-    const parts = [connectorPrompt(this.connectors), this.lazyToolsPrompt(), uiPrompt, planPrompt, longTaskPrompt, `# Files you make\nYour workspace folder is ${ws}. Save documents, decks, sheets and other deliverables inside it (for example in reports/): every file you create or change there appears in the chat with a preview, its full path and Open / Show in folder buttons. When you finish, name the file and its full path.`];
+    const parts = [connectorPrompt(this.connectors), this.lazyToolsPrompt(), uiPrompt, planPrompt, longTaskPrompt, `# Web research vs in-app browser\nAlways prioritize fast headless tools for research, lead lookup, API calls, and checking websites: use web_search, web_fetch, or batch curl/python scripts via shell. Only open the visible in-app browser (browser_open) when previewing a localhost app/site, inspecting visual UI/screenshots, showing a page to the user, or when a single JS-rendered page strictly requires it.`, `# Files you make\nYour workspace folder is ${ws}. Save documents, decks, sheets and other deliverables inside it (for example in reports/): every file you create or change there appears in the chat with a preview, its full path and Open / Show in folder buttons. When you finish, name the file and its full path.`];
     const gh = this.githubState();
     parts.push(await repoPrompt(this.home, chat ?? null, projectId));
     parts.push(folderPrompt(linkedFolders(this.home, chat ?? null, projectId), WIN ? "PowerShell (or cmd)" : "sh"));

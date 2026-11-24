@@ -237,6 +237,25 @@ interface Approval {
   reason?: string;
 }
 
+function UserBubble({ text, brief }: { text: string; brief?: boolean }) {
+  const long = !!brief && text.length > 480;
+  const [expanded, setExpanded] = useState(false);
+  if (!brief) return <div className="bubble">{text}</div>;
+  return (
+    <div className={`bubble brief ${long && !expanded ? "collapsed" : ""}`}>
+      <div className="brief-body">
+        <Markdown text={text} />
+      </div>
+      {long && (
+        <button type="button" className="brief-toggle" onClick={() => setExpanded((e) => !e)}>
+          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          <span>{expanded ? "Show less" : "Show full brief"}</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 type Answer = boolean | "always" | "session";
 
 function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, startedAt, status, last, settle, busy, onSend, onPickModel, onRetry }: { turn: Turn; chatId?: string; streaming?: boolean; approval?: Approval | null; onApprove?: (allow: Answer) => void; note?: string; startedAt?: number; status?: RunStatus; last?: boolean; settle?: boolean; busy?: boolean; onSend?: (text: string) => void; onPickModel?: (model: string, pendingStart: boolean) => void | Promise<void>; onRetry?: () => void }) {
@@ -790,7 +809,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
                   <div key={t.id} className="msg user">
                     <div className="user-col">
                       {!!t.attachments?.length && <AttachmentChips items={t.attachments} />}
-                      {t.content && <div className="bubble">{t.content}</div>}
+                      {t.content && <UserBubble text={t.content} brief={role === "thread" && i === 0} />}
                       {i === lastUserIdx && !live && t.id !== "pending" && t.content && (
                         <button className="edit-msg" title="Put this message back in the box to edit and send again" onClick={() => { setDraft(t.content); textarea.current?.focus(); }}><Pencil size={12} /> Edit</button>
                       )}

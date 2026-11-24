@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { isLocalUrl, normalizeBrowserUrl } from "../src/browser.ts";
 import { browserOpenTool } from "../src/tools/browser.ts";
+import { searchWebGemini } from "../src/tools/search.ts";
 import { Harness, store } from "../src/index.ts";
 import { call, mock, reply, tempHome } from "./helpers.ts";
 
@@ -73,4 +74,34 @@ test("Agent browser tools drive the live bridge, inspect DOM, and attach screens
   assert.ok(existsSync(home.path("workspace", "qa-shot.png")), "screenshot PNG saved cleanly to workspace");
   assert.match(turn.content, /Visual QA passed/);
   await h.close();
+});
+
+test("Headless web_search parses grounded Google Search results and citations cleanly", async () => {
+  const seenUrls: string[] = [];
+  const fakeFetch = (async (url: string) => {
+    seenUrls.push(url);
+    return new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: { parts: [{ text: "Vitrerie Montard (Veauche, 42): 06 58 07 75 11, no standalone website." }] },
+            groundingMetadata: {
+              groundingChunks: [
+                { web: { title: "Annuaire Entreprises", uri: "https://annuaire-entreprises.data.gouv.fr/entreprise/montard" } },
+              ],
+            },
+          },
+        ],
+        usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 45 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as unknown as typeof fetch;
+
+  const res = await searchWebGemini("AIzaTestKey", { query: "Vitrerie Montard Veauche", fetch: fakeFetch });
+  assert.equal(seenUrls.length, 1);
+  assert.match(seenUrls[0], /generativelanguage\.googleapis\.com/);
+  assert.match(res.answer, /06 58 07 75 11/);
+  assert.equal(res.sources.length, 1);
+  assert.equal(res.sources[0].url, "https://annuaire-entreprises.data.gouv.fr/entreprise/montard");
 });

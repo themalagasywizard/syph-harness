@@ -9,7 +9,7 @@ import { defineTool, type Tool } from "./types.ts";
 export const browserOpenTool = defineTool({
   name: "browser_open",
   description:
-    "Open Syph's in-app browser side pane and navigate to a URL (e.g. http://localhost:8765 to preview a site you built, or a reference website). Returns page title and any JavaScript console errors.",
+    "Open Syph's VISIBLE in-app browser side pane and navigate to a URL. SLOW & USER-VISIBLE — use ONLY for: (1) previewing or visually QA-ing a local website/app you built (http://localhost:PORT), (2) visually inspecting a reference design/screenshot, (3) showing a page live to the user, or (4) a single JS-only page after headless web_search/web_fetch failed. NEVER use browser_open in loops for lead research, checking multiple domains, or calling APIs — use fast headless web_search, web_fetch, or shell scripts instead.",
   schema: z.object({
     url: z.string().min(1).describe("URL to open (http://localhost:PORT or https://...)."),
   }),
