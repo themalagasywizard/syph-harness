@@ -13,7 +13,7 @@ import { FolderComposerMenu } from "../components/Folders";
 import { CommandApproval, TerminalPill } from "../components/Terminal";
 import { FileCard, FileIcon } from "../components/FilePreview";
 import { ExtIcon, Slot, type UiExtension } from "../ext";
-import { AutoTurnLine, ThreadCrumb, ThreadRail, ThreadUpdateCard, useProjectThreads } from "../components/Threads";
+import { AutoTurnLine, ThreadCrumb, ThreadRail, ThreadRailToggle, ThreadUpdateCard, useProjectThreads } from "../components/Threads";
 
 const NORMAL_PILLS = [
   { label: "Turn work into a skill", prompt: "Turn what we did today into a reusable skill", icon: <Lightbulb size={14} /> },
@@ -710,72 +710,87 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const noMiniMaxKey = state && !state.config.hasMiniMaxKey && (model ?? "").startsWith("minimax:");
   const noGeminiKey = state && !state.config.hasGeminiKey && (model ?? "").startsWith("gemini:");
 
+  const activeThreads = (threadData?.threads ?? []).filter((t) => !t.resolved);
+  const needsThreads = activeThreads.filter((t) => t.threadState === "blocked" || t.status === "waiting").length;
+  const headerTitle = role === "coordinator" ? (project?.name ?? chat?.title ?? "") : chat?.title && chat.title !== "New chat" ? chat.title : "";
+
   const body = (
     <>
       <div className="topbar">
-        {role === "thread" && chat?.parentId && <ThreadCrumb parentId={chat.parentId} threadId={cid} title={chat.title} projectName={project?.name} state={chat.threadState} live={summary?.status} />}
-        <span className="title ellipsis">{role === "coordinator" ? <>{project?.name ?? chat?.title} <span className="hint coord-tag">Coordinator</span></> : chat?.title && chat.title !== "New chat" ? chat.title : ""}</span>
-        <div className="spacer" />
-        {role ? (
-          <button className="pill" onClick={() => projectId && go({ kind: "projects", projectId })} title="Project settings: instructions, files, repos, tasks and threads">
-            <Settings size={15} /> <span className="pill-label">Settings</span>
-          </button>
-        ) : (
-        <div className="model-menu">
-          <button className={`pill ${project ? "on" : ""}`} onClick={() => setMenu((m) => !m)} title="The project this chat belongs to">
-            <FolderClosed size={15} /> <span className="ellipsis pill-label">{project?.name ?? "No project"}</span>
-          </button>
-          {menu && (
-            <div className="menu" style={{ right: 0, left: "auto", top: 40, bottom: "auto" }}>
-              <button onClick={() => { setProjectId(undefined); setMenu(false); }}>No project {!project && <Check size={14} className="id" />}</button>
-              {state?.projects.map((p) => (
-                <button key={p.id} onClick={() => { setProjectId(p.id); setMenu(false); }}>
-                  <span className="status-dot" style={{ background: p.color }} /> {p.name}
-                  {p.id === projectId && <Check size={14} className="id" />}
-                </button>
-              ))}
-              {!state?.projects.length && <div className="hint" style={{ padding: 10 }}>No projects yet.</div>}
-            </div>
+        <div className="topbar-left">
+          {role === "thread" && chat?.parentId && <ThreadCrumb parentId={chat.parentId} threadId={cid} title={chat.title} projectName={project?.name} state={chat.threadState} live={summary?.status} />}
+          {headerTitle && (
+            <span className="title-wrap">
+              <span className="title ellipsis" title={headerTitle}>{headerTitle}</span>
+              {role === "coordinator" && <span className="hint coord-tag">Coordinator</span>}
+            </span>
           )}
         </div>
-        )}
-        <ActiveRepoChip chatId={cid} projectId={projectId} />
-        <button className={`pill ${browser.open ? "on" : ""}`} onClick={toggleBrowser} title="Toggle in-app browser (Ctrl+Shift+B)">
-          <Globe size={15} />
-          <span className="pill-label">Browser</span>
-          {browser.agentActive && <span className="bp-live-dot" />}
-        </button>
-        <TerminalPill chatId={cid} live={!!live} />
-        <button className={`pill yolo ${yolo ? "on" : ""}`} onClick={toggleYolo} title={yolo ? "YOLO is on: shell (PowerShell) and other ask-first tools run without asking. Click to turn off." : "Turn on YOLO: run shell (PowerShell) and other ask-first tools without asking."}>
-          <Zap size={15} fill={yolo ? "currentColor" : "none"} /> <span className="yolo-text">{yolo ? "YOLO on" : "Ask first"}</span>
-        </button>
-        <Slot name="chat.header" ctx={slotCtx} />
-        {cid && progress?.contract && !progress.contract.draft && (
-          <div className="model-menu">
-            <button className={`pill ${contractOpen ? "on" : ""}`} onClick={() => setContractOpen((o) => !o)} aria-expanded={contractOpen} title="The contract this long task works to"><Flag size={15} /> Contract</button>
-            {contractOpen && (
-              <div className="menu contract-menu" style={{ right: 0 }}>
-                <ContractCard chatId={cid} progress={progress} checks={lastChecks} live={!!live} onChanged={setProgress} onStart={() => send("The contract is approved. Start the work, and keep to it.")} startOpen />
-              </div>
-            )}
-          </div>
-        )}
-        {chatFiles.length > 0 && (
-          <div className="model-menu">
-            <button className="pill" onClick={() => setFilesOpen((o) => !o)} title="Files this chat created or changed"><Files size={15} /> {chatFiles.length} file{chatFiles.length === 1 ? "" : "s"}</button>
-            {filesOpen && (
-              <div className="menu files-menu" style={{ right: 0 }}>
-                {chatFiles.map((f) => (
-                  <button key={f.path} onClick={() => { showFile(f.path); setFilesOpen(false); }} title={f.path}>
-                    <FileIcon name={f.name} size={16} />
-                    <span className="fm-text"><span className="ellipsis">{f.name}</span><span className="fm-path">{f.path}</span></span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        <button className="icon-btn" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">{theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}</button>
+        <div className="topbar-actions">
+          {role ? (
+            <button className="pill" onClick={() => projectId && go({ kind: "projects", projectId })} title="Project settings: instructions, files, repos, tasks and threads">
+              <Settings size={15} /> <span className="pill-label">Settings</span>
+            </button>
+          ) : (
+            <div className="model-menu">
+              <button className={`pill ${project ? "on" : ""}`} onClick={() => setMenu((m) => !m)} title={project ? `Project: ${project.name}` : "The project this chat belongs to"}>
+                <FolderClosed size={15} /> <span className="ellipsis pill-label">{project?.name ?? "No project"}</span>
+              </button>
+              {menu && (
+                <div className="menu" style={{ right: 0, left: "auto", top: 40, bottom: "auto" }}>
+                  <button onClick={() => { setProjectId(undefined); setMenu(false); }}>No project {!project && <Check size={14} className="id" />}</button>
+                  {state?.projects.map((p) => (
+                    <button key={p.id} onClick={() => { setProjectId(p.id); setMenu(false); }}>
+                      <span className="status-dot" style={{ background: p.color }} /> {p.name}
+                      {p.id === projectId && <Check size={14} className="id" />}
+                    </button>
+                  ))}
+                  {!state?.projects.length && <div className="hint" style={{ padding: 10 }}>No projects yet.</div>}
+                </div>
+              )}
+            </div>
+          )}
+          <ActiveRepoChip chatId={cid} projectId={projectId} />
+          <button className={`pill ${browser.open ? "on" : ""}`} onClick={toggleBrowser} title="Toggle in-app browser (Ctrl+Shift+B)">
+            <Globe size={15} />
+            <span className="pill-label">Browser</span>
+            {browser.agentActive && <span className="bp-live-dot" />}
+          </button>
+          <TerminalPill chatId={cid} live={!!live} />
+          <button className={`pill yolo ${yolo ? "on" : ""}`} onClick={toggleYolo} title={yolo ? "YOLO is on: shell (PowerShell) and other ask-first tools run without asking. Click to turn off." : "Turn on YOLO: run shell (PowerShell) and other ask-first tools without asking."}>
+            <Zap size={15} fill={yolo ? "currentColor" : "none"} /> <span className="yolo-text">{yolo ? "YOLO on" : "Ask first"}</span>
+          </button>
+          <Slot name="chat.header" ctx={slotCtx} />
+          {cid && progress?.contract && !progress.contract.draft && (
+            <div className="model-menu">
+              <button className={`pill ${contractOpen ? "on" : ""}`} onClick={() => setContractOpen((o) => !o)} aria-expanded={contractOpen} title="The contract this long task works to"><Flag size={15} /> <span className="pill-label">Contract</span></button>
+              {contractOpen && (
+                <div className="menu contract-menu" style={{ right: 0 }}>
+                  <ContractCard chatId={cid} progress={progress} checks={lastChecks} live={!!live} onChanged={setProgress} onStart={() => send("The contract is approved. Start the work, and keep to it.")} startOpen />
+                </div>
+              )}
+            </div>
+          )}
+          {chatFiles.length > 0 && (
+            <div className="model-menu">
+              <button className="pill" onClick={() => setFilesOpen((o) => !o)} title="Files this chat created or changed"><Files size={15} /> <span>{chatFiles.length}</span><span className="pill-label"> file{chatFiles.length === 1 ? "" : "s"}</span></button>
+              {filesOpen && (
+                <div className="menu files-menu" style={{ right: 0 }}>
+                  {chatFiles.map((f) => (
+                    <button key={f.path} onClick={() => { showFile(f.path); setFilesOpen(false); }} title={f.path}>
+                      <FileIcon name={f.name} size={16} />
+                      <span className="fm-text"><span className="ellipsis">{f.name}</span><span className="fm-path">{f.path}</span></span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          <button className="icon-btn" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme" title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button>
+          {role === "coordinator" && projectId && (
+            <ThreadRailToggle open={railOpen} onToggle={() => setRailOpen(!railOpen)} activeCount={activeThreads.length} needsCount={needsThreads} />
+          )}
+        </div>
       </div>
 
       <div className="chat-scroll" ref={scroller}>
@@ -941,7 +956,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
       </div>
     </>
   );
-  if (role !== "coordinator" || !projectId) return body;
+  if (role !== "coordinator" || !projectId) return <div className="chat-pane">{body}</div>;
   return (
     <div className="chat-with-rail">
       <div className="chat-pane">{body}</div>

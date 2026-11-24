@@ -58,9 +58,13 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 .app { display: flex; height: 100%; overflow: hidden; }
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
 
-.topbar { height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 16px; flex-shrink: 0; }
-.topbar .title { font-size: 18px; font-weight: 500; }
+.topbar { height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 14px; flex-shrink: 0; min-width: 0; }
+.topbar-left { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; overflow: hidden; }
+.topbar .title-wrap { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%; overflow: hidden; }
+.topbar .title { font-size: 16px; font-weight: 500; min-width: 0; max-width: clamp(96px, 28cqi, 260px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar .spacer { flex: 1; }
+.topbar-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.topbar .icon-btn { width: 34px; height: 34px; flex-shrink: 0; }
 
 .icon-btn { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); transition: background .15s, color .15s; }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); }
@@ -846,8 +850,34 @@ textarea.input { resize: vertical; min-height: 96px; line-height: 1.55; }
 .gh-btn { position: relative; }
 .gh-btn.on { background: var(--surface-3); }
 .gh-btn .gh-dot { position: absolute; right: 5px; bottom: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--good, #2ea043); box-shadow: 0 0 0 2px var(--bg); }
-.topbar .pill-label { max-width: 160px; }
-@media (max-width: 720px) { .topbar .pill-label { max-width: 90px; } .topbar .pill.yolo .yolo-text { display: none; } }
+.topbar .pill-label { max-width: 120px; }
+.topbar .repo-chip b { max-width: 110px; }
+@media (max-width: 720px) { .topbar .pill-label { max-width: 84px; } .topbar .pill.yolo .yolo-text { display: none; } }
+
+/* Clean header collapse based on chat pane width (works on narrow windows and when split panes open) */
+@container chatpane (max-width: 860px) {
+  .topbar-actions .pill-label,
+  .topbar-actions .yolo-text { display: none; }
+  .topbar-actions .pill { padding: 0 8px; gap: 4px; }
+  .topbar .repo-chip b { max-width: 76px; }
+}
+@container chatpane (max-width: 640px) {
+  .topbar { padding: 0 10px; gap: 6px; }
+  .topbar-actions { gap: 2px; }
+  .topbar .coord-tag { display: none; }
+  .topbar .repo-chip b,
+  .topbar .repo-chip .repo-state { display: none; }
+  .topbar .thread-crumb { gap: 6px; }
+  .topbar .thread-crumb .pill { padding: 0 8px; }
+  .topbar .thread-crumb .pill-label { max-width: 72px; }
+  .topbar .title { font-size: 15px; max-width: 160px; }
+}
+@container chatpane (max-width: 480px) {
+  .topbar .thread-crumb .pill-label { display: none; }
+  .topbar .title { max-width: 104px; }
+  .topbar .icon-btn { width: 30px; height: 30px; }
+  .topbar-actions .pill { height: 30px; padding: 0 7px; }
+}
 
 .icon-btn.attach.on { background: var(--surface-3); }
 .add-menu { min-width: 240px; }
@@ -924,7 +954,7 @@ textarea.input.skill-body { min-height: 300px; font-family: var(--mono, ui-monos
 
 /* Project threads: coordinator chat with its thread rail, update cards, and the project page card */
 .chat-with-rail { flex: 1; min-height: 0; display: flex; }
-.chat-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.chat-pane { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; container-type: inline-size; container-name: chatpane; }
 .thread-rail { width: 300px; flex: none; border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
 .tr-head { display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 8px 0 16px; flex: none; }
 .tr-title { font-weight: 600; font-size: 14px; }
@@ -942,9 +972,10 @@ textarea.input.skill-body { min-height: 300px; font-family: var(--mono, ui-monos
 .tr-del { opacity: .65; }
 .tr-del:hover { opacity: 1; color: var(--bad); }
 .tr-more { margin: 4px 16px 14px; font-size: 12.5px; }
-.thread-rail-toggle { position: absolute; right: 12px; top: 64px; z-index: 5; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border); color: var(--muted); }
-.thread-rail-toggle:hover { color: var(--text); }
-.thread-rail-toggle .live-dot { margin: 0; }
+.thread-toggle { position: relative; }
+.thread-toggle.on { background: var(--surface-2); color: var(--text); }
+.thread-toggle .tt-badge { position: absolute; top: 2px; right: 2px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 999px; background: var(--surface-3); color: var(--text); font-size: 9.5px; font-weight: 600; line-height: 14px; text-align: center; pointer-events: none; }
+.thread-toggle .tt-dot { position: absolute; bottom: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); pointer-events: none; }
 .chat-with-rail { position: relative; }
 .thread-state { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); white-space: nowrap; flex: none; }
 .thread-state .ts-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }

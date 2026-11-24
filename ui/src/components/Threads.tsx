@@ -74,6 +74,22 @@ export function ThreadUpdateCard({ update, current }: { update: ThreadUpdate; cu
   );
 }
 
+/** Header button (placed right after dark mode) to collapse or expand the coordinator's threads rail. */
+export function ThreadRailToggle({ open, onToggle, activeCount, needsCount }: { open: boolean; onToggle: () => void; activeCount: number; needsCount: number }) {
+  return (
+    <button
+      className={`icon-btn thread-toggle ${open ? "on" : ""}`}
+      onClick={onToggle}
+      aria-label={open ? "Hide threads" : "Show threads"}
+      title={open ? "Hide threads" : activeCount > 0 ? `Show threads (${activeCount} active)` : "Show threads"}
+    >
+      {open ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+      {!open && activeCount > 0 && <span className="tt-badge">{activeCount > 9 ? "9+" : activeCount}</span>}
+      {!open && needsCount > 0 && <span className="tt-dot" />}
+    </button>
+  );
+}
+
 /** The list of threads beside a coordinator chat. */
 export function ThreadRail({ projectId, open, setOpen }: { projectId: string; open: boolean; setOpen: (o: boolean) => void }) {
   const { go } = useApp();
@@ -82,15 +98,7 @@ export function ThreadRail({ projectId, open, setOpen }: { projectId: string; op
   const threads = data?.threads ?? [];
   const active = threads.filter((t) => !t.resolved);
   const shown = showResolved ? threads : active;
-  const needs = active.filter((t) => t.threadState === "blocked" || t.status === "waiting").length;
-  if (!open)
-    return (
-      <button className="thread-rail-toggle" onClick={() => setOpen(true)} title="Show threads">
-        <PanelRightOpen size={17} />
-        {active.length > 0 && <span className="badge">{active.length}</span>}
-        {needs > 0 && <span className="live-dot waiting" />}
-      </button>
-    );
+  if (!open) return null;
   return (
     <aside className="thread-rail">
       <div className="tr-head">
