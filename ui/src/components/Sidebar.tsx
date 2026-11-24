@@ -96,7 +96,7 @@ export function Sidebar({ view, collapsed, toggle }: { view: View; collapsed: bo
       <div className="section-label">Recent</div>
       <div className="recent nav">
         {chats.length === 0 && <div className="hint" style={{ padding: "4px 12px" }}>No chats yet.</div>}
-        {chats.slice(0, 60).map((c) => (
+        {chats.filter((c) => c.role !== "thread").slice(0, 60).map((c) => (
           <div key={c.id} className={`nav-item chat-row ${view.kind === "chat" && view.chatId === c.id ? "active" : ""}`} onClick={() => go({ kind: "chat", chatId: c.id })} role="button" tabIndex={0}>
             <span className="dot" style={{ background: colorOf(c.projectId) }} />
             <span className="t">{c.title}</span>

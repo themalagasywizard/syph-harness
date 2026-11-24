@@ -229,10 +229,12 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
             ["longMinutes", "Minutes for a long task", "0 means no cap. Runs can go for hours.", 0, 100000],
             ["maxUsdPerLongRun", "Spend for a long task (USD)", "0 means no cap. The daily chat budget below still applies: raise it for long runs.", 0, 1000],
             ["reviewAfterErrors", "Review a run after this many failed calls", "Syph works out what it was missing and proposes a fix (a tool, a skill, a rule) in Evolve. 0 turns this off.", 0, 100],
+            ["maxThreads", "Project threads at once", "How many threads the coordinators may run at the same time. More wait in a queue.", 1, 20],
+            ["coordinatorWakesPerHour", "Coordinator follow-ups per hour", "How often finished threads may wake a coordinator to report. Stops two agents from pinging each other forever. 0 turns follow-ups off.", 0, 60],
           ] as const).map(([key, name, sub, min, max]) => (
             <div className="row" style={{ gridTemplateColumns: "1fr 120px" }} key={key}>
               <div><div className="name">{name}</div><div className="sub">{sub}</div></div>
-              <input className="input" type="number" min={min} max={max} step={key === "maxUsdPerRun" || key === "maxUsdPerLongRun" ? 0.1 : 1} value={agent[key] ?? 0} onChange={(e) => patch({ agent: { ...agent, [key]: Number(e.target.value) } })} />
+              <input className="input" type="number" min={min} max={max} step={key === "maxUsdPerRun" || key === "maxUsdPerLongRun" ? 0.1 : 1} value={agent[key] ?? (key === "maxThreads" ? 3 : key === "coordinatorWakesPerHour" ? 6 : 0)} onChange={(e) => patch({ agent: { ...agent, [key]: Number(e.target.value) } })} />
             </div>
           ))}
           <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>

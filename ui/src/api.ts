@@ -29,6 +29,10 @@ export interface Turn {
   attachments?: Attachment[];
   usage?: Usage;
   review?: { status: "running" | "proposed" | "none"; mistakes: number; proposalId?: string; title?: string; note?: string };
+  /** In a coordinator chat: a card about one of its threads. */
+  threadUpdate?: ThreadUpdate;
+  /** A turn Syph started for the coordinator after a thread update (not typed by the user). */
+  auto?: boolean;
   /** The run failed for a reason with its own card (the provider ran out of credit). */
   failure?: { kind: "credits"; provider: string; affordable?: number };
   createdAt: string;
@@ -165,6 +169,37 @@ export interface ChatSummary {
   updatedAt: string;
   /** Set while the chat is working on the server: "waiting" means it needs an approval. */
   status?: "running" | "waiting";
+  /** "coordinator": a project's main chat. "thread": a chat the coordinator started. */
+  role?: "coordinator" | "thread";
+  parentId?: string;
+  threadState?: ThreadState;
+  summary?: string;
+  resolved?: boolean;
+}
+
+export type ThreadState = "queued" | "working" | "blocked" | "review_ready" | "done" | "failed" | "stopped";
+
+export interface ThreadUpdate {
+  threadId: string;
+  title: string;
+  state: ThreadState;
+  summary: string;
+  needs?: string;
+  recap?: Recap;
+  costUsd?: number;
+  filesChanged?: number;
+}
+
+export interface ThreadSummary extends ChatSummary {
+  costUsd: number;
+  lastAnswer?: string;
+  createdAt: string;
+}
+
+export interface ProjectThreads {
+  coordinatorId: string;
+  coordinatorStatus?: "running" | "waiting";
+  threads: ThreadSummary[];
 }
 
 export interface Chat extends ChatSummary {
@@ -184,6 +219,9 @@ export interface Project {
   chatCount?: number;
   taskCount?: number;
   repos?: RepoLink[];
+  coordinatorChatId?: string;
+  /** Let the coordinator react when a thread finishes (default on). */
+  coordinatorWake?: boolean;
 }
 
 export interface ProjectDetail extends Project {
@@ -193,6 +231,8 @@ export interface ProjectDetail extends Project {
   files: string[];
   chats: ChatSummary[];
   tasks: Task[];
+  /** What the project's chats and threads cost, today and in all. */
+  spend?: { today: number; total: number };
 }
 
 export interface Task {
@@ -206,6 +246,8 @@ export interface Task {
   lastRun?: string;
   lastStatus: "ok" | "error" | "running" | "never";
   lastChatId?: string;
+  /** Each run is a thread of the project's coordinator, which reports on it. */
+  viaCoordinator?: boolean;
   nextRun?: string | null;
   scheduleText?: string;
 }
@@ -294,7 +336,7 @@ export interface Config {
   defaults: { chatModel: string; taskModel: string; reflectorModel: string; judgeModel: string; effort?: Effort };
   budgets: { dailyUsd: { chat: number; tasks: number; evolve: number } };
   approval: { autoAccept: { memory: boolean; skill: boolean }; yolo?: boolean; yoloTasks?: boolean; allowCommands?: string[]; taskCommands?: string[] };
-  agent?: { shortSteps?: number; maxUsdPerRun?: number; maxMinutes?: number; longSteps?: number; longMinutes?: number; maxUsdPerLongRun?: number; reviewAfterErrors?: number; gitCheckpoints?: boolean; lazyTools?: boolean };
+  agent?: { shortSteps?: number; maxUsdPerRun?: number; maxMinutes?: number; longSteps?: number; longMinutes?: number; maxUsdPerLongRun?: number; reviewAfterErrors?: number; gitCheckpoints?: boolean; lazyTools?: boolean; maxThreads?: number; coordinatorWakesPerHour?: number; threadBriefs?: boolean };
   evolve: { samplesPerCase: number; maxAttempts: number; heldOutFraction: number };
   killSwitch: boolean;
   hasOpenRouterKey: boolean;
@@ -426,3 +468,16 @@ export function relTime(iso?: string | null) {
 }
 
 export type Effort = "auto" | "low" | "medium" | "high" | "xhigh" | "max";
+
+/** How a thread state reads in the interface. */
+export const THREAD_STATE: Record<ThreadState, { label: string; tone: "run" | "warn" | "ok" | "bad" | "muted" }> = {
+  queued: { label: "Queued", tone: "muted" },
+  working: { label: "Working", tone: "run" },
+  blocked: { label: "Needs you", tone: "warn" },
+  review_ready: { label: "Ready for review", tone: "ok" },
+  done: { label: "Done", tone: "ok" },
+  failed: { label: "Failed", tone: "bad" },
+  stopped: { label: "Stopped", tone: "muted" },
+};
+
+export const usd = (n?: number) => (!n ? "$0" : n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);

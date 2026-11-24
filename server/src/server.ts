@@ -213,7 +213,8 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   route("PATCH", "/api/chats/:id", (_q, _s, p, body) => {
     const c = store.getChat(home, p.id);
     if (!c) throw httpError(404, "No such chat");
-    Object.assign(c, pick(body, ["title", "projectId", "model"]));
+    // A coordinator and its threads belong to their project for good.
+    Object.assign(c, pick(body, c.role ? ["title", "model"] : ["title", "projectId", "model"]));
     store.saveChat(home, c);
     return { ok: true };
   });

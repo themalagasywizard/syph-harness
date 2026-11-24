@@ -25,6 +25,8 @@ export interface ThreadHost {
 /** The message a woken coordinator gets. The updates themselves are in its history just before it. */
 export const WAKE_TEXT = "(Syph: your threads changed; the updates are just above. Follow up if something is needed — start or message a thread — otherwise tell me the outcome in one or two sentences.)";
 
+/** How long a wake-up waits for other threads that finish at about the same time. */
+const WAKE_DELAY_MS = 1500;
 const ACTIVE: ThreadState[] = ["queued", "working", "blocked"];
 const money = (usd: number) => (usd >= 0.01 ? `$${usd.toFixed(2)}` : usd > 0 ? "<$0.01" : "$0");
 
@@ -55,6 +57,8 @@ export class Threads {
   private running = new Set<string>();
   /** Coordinators that should wake once their current run ends. */
   private wakeLater = new Set<string>();
+  /** Coordinators with a wake-up about to start (updates arriving together share one). */
+  private wakeTimers = new Set<string>();
   /** Work still finishing in the background (briefs, posts), so tests and shutdown can wait. */
   private pending = new Set<Promise<unknown>>();
 
@@ -317,7 +321,19 @@ export class Threads {
       this.wakeLater.add(coord.id);
       return;
     }
-    this.wake(coord.id);
+    // Threads often finish close together: wait a moment so one wake-up covers them all.
+    if (this.wakeTimers.has(coord.id)) return;
+    this.wakeTimers.add(coord.id);
+    this.track(
+      new Promise<void>((done) =>
+        setTimeout(() => {
+          this.wakeTimers.delete(coord.id);
+          if (this.host.isLive(coord.id)) this.wakeLater.add(coord.id);
+          else this.wake(coord.id);
+          done();
+        }, WAKE_DELAY_MS),
+      ),
+    );
   }
 
   private wake(coordinatorId: string) {

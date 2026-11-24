@@ -236,3 +236,15 @@ test("coordinator eval cases get the thread tools, and tool_not_called scores", 
   assert.ok(out.toolsCalled.includes("start_thread"));
   for (const check of c.checks) assert.equal((await scoreCheck(home, check, c, out)).score, 1);
 });
+
+test("threads that finish together share one wake-up", async () => {
+  const { home, h, coord, idle } = await setup({ agent: { threadBriefs: false } });
+  mock("main", (req) => (isCoordinator(req) ? reply("Both are done.") : reply("finished")));
+  h.threads.start(coord.id, { title: "One", prompt: "one" });
+  h.threads.start(coord.id, { title: "Two", prompt: "two" });
+  await idle();
+  const c = store.getChat(home, coord.id)!;
+  assert.equal(c.turns.filter((x) => x.threadUpdate).length, 2);
+  assert.equal(c.turns.filter((x) => x.auto).length, 1);
+  await h.close();
+});

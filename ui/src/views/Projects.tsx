@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Clock, Eye, FolderClosed, FolderOpen, MessageSquare, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowUp, Clock, Eye, FolderClosed, FolderOpen, GitBranch, MessageSquare, Plus, Trash2 } from "lucide-react";
 import { useApp } from "../App";
-import { api, relTime, type Project, type ProjectDetail } from "../api";
+import { api, relTime, sendMessage, usd, type Chat, type Project, type ProjectDetail } from "../api";
+import { StateBadge, useProjectThreads } from "../components/Threads";
+import { Toggle } from "../components/Toggle";
 import { FileIcon, FileActions, revealFile } from "../components/FilePreview";
 import { Slot } from "../ext";
 import { ProjectRepos } from "../components/Repos";
@@ -18,7 +20,7 @@ export function ProjectsView({ projectId }: { projectId?: string }) {
         <div className="page-head">
           <div>
             <h2>Projects</h2>
-            <p>Each project has its own instructions, files, memory and tasks.</p>
+            <p>Each project has a coordinator chat that hands real work to threads, plus its own instructions, files and tasks.</p>
           </div>
           <div className="spacer" />
           <button className="btn primary" onClick={() => setCreating(true)}><Plus size={18} /> New project</button>
@@ -77,7 +79,10 @@ function NewProject({ close, created }: { close: () => void; created: (p: Projec
 function ProjectDetailView({ id }: { id: string }) {
   const { go, refresh, tick, state, showFile } = useApp();
   const [p, setP] = useState<ProjectDetail | null>(null);
-  const [tab, setTab] = useState<"chats" | "instructions" | "files" | "tasks">("chats");
+  const [tab, setTab] = useState<"threads" | "chats" | "instructions" | "files" | "tasks">("threads");
+  const threads = useProjectThreads(id);
+  const [ask, setAsk] = useState("");
+  const [asking, setAsking] = useState(false);
   const [instructions, setInstructions] = useState("");
   const [saved, setSaved] = useState(false);
 
@@ -96,6 +101,31 @@ function ProjectDetailView({ id }: { id: string }) {
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
+  const openCoordinator = async () => {
+    const c = await api.get<Chat>(`/projects/${id}/coordinator`);
+    go({ kind: "chat", chatId: c.id });
+  };
+  /** Send straight to the coordinator from the project page, then open it to watch. */
+  const askCoordinator = async () => {
+    const text = ask.trim();
+    if (!text || asking) return;
+    setAsking(true);
+    try {
+      const c = await api.get<Chat>(`/projects/${id}/coordinator`);
+      await sendMessage(c.id, text);
+      setAsk("");
+      go({ kind: "chat", chatId: c.id });
+    } finally {
+      setAsking(false);
+    }
+  };
+  const setWake = async (on: boolean) => {
+    await api.put(`/projects/${id}`, { coordinatorWake: on });
+    setP((x) => (x ? { ...x, coordinatorWake: on } : x));
+  };
+  const active = (threads?.threads ?? []).filter((t) => !t.resolved);
+  const needsYou = active.filter((t) => t.threadState === "blocked" || t.status === "waiting").length;
+  const working = active.filter((t) => t.status === "running" || t.threadState === "working" || t.threadState === "queued").length;
   const remove = async () => {
     if (!confirm(`Delete project "${p.name}" and its files? Chats are kept.`)) return;
     await api.del(`/projects/${id}`);
@@ -116,7 +146,26 @@ function ProjectDetailView({ id }: { id: string }) {
           <div className="spacer" />
           <Slot name="project.header" ctx={{ projectId: id }} variant="btn" />
           <button className="icon-btn" onClick={remove} aria-label="Delete project"><Trash2 size={18} /></button>
-          <button className="btn primary" onClick={() => go({ kind: "chat", projectId: id })}><Plus size={18} /> New chat</button>
+          <button className="btn ghost" onClick={() => go({ kind: "chat", projectId: id })} title="A plain chat in this project, without the coordinator"><Plus size={18} /> Chat</button>
+          <button className="btn primary" onClick={openCoordinator}><MessageSquare size={18} /> Coordinator</button>
+        </div>
+
+        <div className="coord-card card">
+          <div className="cc-head">
+            <MessageSquare size={17} />
+            <span className="cc-title">Coordinator</span>
+            <span className="hint">{working ? `${working} working` : "Idle"}{needsYou ? ` · ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}{p.spend ? ` · ${usd(p.spend.today)} today, ${usd(p.spend.total)} in all` : ""}</span>
+            <span className="spacer" />
+            {threads?.coordinatorStatus && <span className={`live-dot ${threads.coordinatorStatus}`} />}
+          </div>
+          <div className="cc-ask">
+            <textarea className="input" rows={2} value={ask} onChange={(e) => setAsk(e.target.value)} placeholder={`Ask ${p.name} for something. Real work gets its own thread.`} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); askCoordinator(); } }} />
+            <button className={`send ${ask.trim() && !asking ? "ready" : ""}`} onClick={askCoordinator} disabled={!ask.trim() || asking} aria-label="Send to the coordinator"><ArrowUp size={18} /></button>
+          </div>
+          <div className="cc-foot">
+            <Toggle on={p.coordinatorWake !== false} onChange={setWake} label="Follow up on finished threads" />
+            <span className="hint"><b>Follow up on finished threads.</b> The coordinator reads each finished thread and tells you the outcome (at most a few times an hour).</span>
+          </div>
         </div>
 
         <div className="proj-folder">
@@ -128,14 +177,29 @@ function ProjectDetailView({ id }: { id: string }) {
         <ProjectRepos projectId={id} />
 
         <div className="tabs">
-          {(["chats", "instructions", "files", "tasks"] as const).map((t) => (
-            <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>
+          {(["threads", "chats", "instructions", "files", "tasks"] as const).map((t) => (
+            <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>{t === "chats" ? "Other chats" : t[0].toUpperCase() + t.slice(1)}{t === "threads" && active.length ? ` (${active.length})` : ""}</button>
           ))}
         </div>
 
+        {tab === "threads" && (
+          <div className="list">
+            {!threads?.threads.length && <div className="empty">No threads yet. Ask the coordinator for some work and it starts one.</div>}
+            {threads?.threads.map((t) => (
+              <button key={t.id} className={`row thread-row ${t.resolved ? "resolved" : ""}`} style={{ gridTemplateColumns: "18px 1fr auto auto auto", width: "100%", textAlign: "left" }} onClick={() => go({ kind: "chat", chatId: t.id })}>
+                <GitBranch size={15} className="sub" />
+                <span className="ellipsis"><span className="name">{t.title}</span>{t.summary && <span className="sub thread-sum"> — {t.summary}</span>}</span>
+                <StateBadge state={t.threadState} live={t.status} />
+                <span className="sub">{usd(t.costUsd)}</span>
+                <span className="sub">{relTime(t.updatedAt)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {tab === "chats" && (
           <div className="list">
-            {p.chats.length === 0 && <div className="empty">No chats yet.</div>}
+            {p.chats.length === 0 && <div className="empty">No other chats. Plain chats in this project, outside the coordinator, show up here.</div>}
             {p.chats.map((c) => (
               <button key={c.id} className="row" style={{ gridTemplateColumns: "1fr auto", width: "100%", textAlign: "left" }} onClick={() => go({ kind: "chat", chatId: c.id })}>
                 <span className="name ellipsis">{c.title}</span>
