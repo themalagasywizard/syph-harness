@@ -121,6 +121,7 @@ struct ProjectDetailView: View {
     @State private var linking = false
     @State private var preview: FileRef?
     @State private var actions = RepoActions()
+    @State private var threads: ProjectThreads?
 
     enum Section: String, CaseIterable { case chats = "Chats", instructions = "Instructions", files = "Files", tasks = "Tasks" }
 
@@ -136,8 +137,15 @@ struct ProjectDetailView: View {
                             if let d = p.description, !d.isEmpty { Text(d).font(.subheadline).foregroundStyle(Palette.muted) }
                         }
                     }
+                    if let t = threads {
+                        Button { Haptic.tap(); app.openChat(t.coordinatorId) } label: {
+                            Label("Coordinator", systemImage: "bubble.left.and.text.bubble.right").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.primary)
+                        threadsCard(t)
+                    }
                     Button { app.newChat(projectId: p.id) } label: {
-                        Label("New chat in \(p.name)", systemImage: "square.and.pencil").frame(maxWidth: .infinity)
+                        Label(threads == nil ? "New chat in \(p.name)" : "Plain chat in \(p.name)", systemImage: "square.and.pencil").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.primary)
 
@@ -190,7 +198,37 @@ struct ProjectDetailView: View {
         guard let d = try? await app.backend.project(id) else { return }
         withAnimation(.smooth) { p = d }
         instructions = d.instructions
+        if let t = try? await app.backend.projectThreads(id) { withAnimation(.smooth) { threads = t } }
         await loadRepos()
+    }
+
+    @ViewBuilder private func threadsCard(_ t: ProjectThreads) -> some View {
+        let active = t.threads.filter { $0.resolved != true }
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Threads").sectionLabel().padding(.horizontal, 6)
+            if active.isEmpty {
+                Text("Ask the coordinator for some work and it starts a thread for it. Threads show up here.")
+                    .font(.footnote).foregroundStyle(Palette.muted).padding(.horizontal, 6)
+            } else {
+                RowGroup {
+                    ForEach(active) { th in
+                        Button { Haptic.tap(); app.openChat(th.id) } label: {
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(th.title).font(.body.weight(.medium)).foregroundStyle(Palette.text).lineLimit(1)
+                                    if let s = th.summary { Text(s).font(.footnote).foregroundStyle(Palette.muted).lineLimit(2).multilineTextAlignment(.leading) }
+                                }
+                                Spacer(minLength: 6)
+                                ThreadStateBadge(state: th.status == "waiting" ? "blocked" : th.status == "running" ? "working" : th.threadState ?? "done")
+                            }
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 14)
+                        }
+                        .buttonStyle(.pressable)
+                    }
+                }
+            }
+        }
     }
 
     private func loadRepos() async {
