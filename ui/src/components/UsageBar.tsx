@@ -7,7 +7,7 @@ export interface UsageMeter {
   label: string;
   used: number;
   total: number;
-  unit: "requests" | "usd";
+  unit: "requests" | "usd" | "percent";
   resetsAt?: number;
 }
 
@@ -40,6 +40,7 @@ export function resetsIn(at?: number, now = Date.now()) {
 }
 
 function amount(m: UsageMeter) {
+  if (m.unit === "percent") return `${Math.round(Math.max(0, m.total - m.used))}% left`;
   if (m.unit === "usd") return `$${Math.max(0, m.total - m.used).toFixed(2)} left of $${m.total.toFixed(2)}`;
   return `${Math.max(0, m.total - m.used).toLocaleString()} of ${m.total.toLocaleString()} requests left`;
 }

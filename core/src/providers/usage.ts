@@ -9,7 +9,7 @@ export interface UsageMeter {
   label: string;
   used: number;
   total: number;
-  unit: "requests" | "usd";
+  unit: "requests" | "usd" | "percent";
   /** When this meter resets, as epoch ms, when the provider says. */
   resetsAt?: number;
 }
@@ -44,21 +44,30 @@ export function parseMiniMaxRemains(json: any, model?: string, now = Date.now())
   const list: any[] = json?.model_remains ?? json?.data?.model_remains ?? (Array.isArray(json?.data) ? json.data : []);
   if (!Array.isArray(list) || !list.length) return [];
   const want = model?.toLowerCase();
+  const reports = (m: any) => (num(m?.current_interval_total_count) ?? 0) > 0 || num(m?.current_interval_remaining_percent) !== undefined;
   const entry =
     (want && list.find((m) => String(m?.model_name ?? m?.model ?? "").toLowerCase() === want)) ??
-    list.find((m) => (num(m?.current_interval_total_count) ?? 0) > 0) ??
+    list.find((m) => String(m?.model_name ?? "").toLowerCase() === "general") ??
+    list.find(reports) ??
     list[0];
   const meters: UsageMeter[] = [];
-  const total = num(entry?.current_interval_total_count);
-  const used = num(entry?.current_interval_usage_count);
-  if (total && used !== undefined) {
-    meters.push({ label: "5-hour window", used, total, unit: "requests", resetsAt: resetTime(entry.end_time, entry.remains_time, now) });
-  }
-  const wTotal = num(entry?.current_weekly_total_count ?? entry?.weekly_total_count);
-  const wUsed = num(entry?.current_weekly_usage_count ?? entry?.weekly_usage_count);
-  if (wTotal && wUsed !== undefined) {
-    meters.push({ label: "Weekly", used: wUsed, total: wTotal, unit: "requests", resetsAt: resetTime(entry.weekly_end_time, entry.weekly_remains_time, now) });
-  }
+  // Plans that count requests report totals; the current plans report only a remaining percentage
+  // (with the counts at 0), so fall back to that.
+  const meter = (label: string, total: unknown, used: unknown, remainingPct: unknown, resetsAt?: number) => {
+    const t = num(total);
+    const u = num(used);
+    const pct = num(remainingPct);
+    if (t && u !== undefined) meters.push({ label, used: u, total: t, unit: "requests", resetsAt });
+    else if (pct !== undefined) meters.push({ label, used: Math.max(0, Math.min(100, 100 - pct)), total: 100, unit: "percent", resetsAt });
+  };
+  meter("5-hour window", entry?.current_interval_total_count, entry?.current_interval_usage_count, entry?.current_interval_remaining_percent, resetTime(entry?.end_time, entry?.remains_time, now));
+  meter(
+    "Weekly",
+    entry?.current_weekly_total_count ?? entry?.weekly_total_count,
+    entry?.current_weekly_usage_count ?? entry?.weekly_usage_count,
+    entry?.current_weekly_remaining_percent,
+    resetTime(entry?.weekly_end_time, entry?.weekly_remains_time, now),
+  );
   return meters;
 }
 
@@ -67,10 +76,12 @@ export async function miniMaxUsage(home: Home, opts: { key: string; baseUrl: str
   const f = opts.fetch ?? fetch;
   const origin = new URL(opts.baseUrl).origin;
   const china = /minimaxi\.com$/.test(new URL(opts.baseUrl).hostname);
+  // The coding-plan path on the API host is the one that answers plan keys today; the documented
+  // token-plan path is the fallback.
   const urls = [
+    `${origin}/v1/api/openplatform/coding_plan/remains`,
     `${origin}/v1/token_plan/remains`,
     china ? "https://www.minimaxi.com/v1/token_plan/remains" : "https://www.minimax.io/v1/token_plan/remains",
-    `${origin}/v1/api/openplatform/coding_plan/remains`,
   ];
   let lastError = "MiniMax didn't report plan usage for this key.";
   for (const url of [...new Set(urls)]) {
