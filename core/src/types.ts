@@ -304,6 +304,8 @@ export interface ChatRecord {
   pendingNotes?: string[];
   /** For a coordinator: when it was woken by threads lately (loop guard). */
   wakes?: string[];
+  /** A chat started on the iPhone app while it had no computer: its id there, so a repeated sync updates the same chat. */
+  phoneId?: string;
 }
 
 export interface Turn {
