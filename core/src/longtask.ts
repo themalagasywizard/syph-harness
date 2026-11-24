@@ -120,7 +120,7 @@ export const noteProgressTool = defineTool({
 export const askUserTool = defineTool({
   name: "ask_user",
   description:
-    "Ask the user a question you can't answer yourself (a decision, a missing fact, a choice between approaches, or which model to use), with 2-4 short answer options they can tap — or set pick_model: true to show an interactive model selector right in the chat/thread. Your turn ends after this call; their answer comes as the next message. Don't use it for things you can find out with your tools.",
+    "Ask the user a question you can't answer yourself (a decision, a missing fact, a choice between approaches, or which model to use), with 2-4 short answer options they can tap — or set pick_model: true to show an interactive model selector right in the chat/thread. If the user asked for an explanation, analysis, or plan before deciding, write that full explanation in your message right before calling ask_user — it will stay visible above the question card. Your turn ends after this call; their answer comes as the next message. Don't use it for things you can find out with your tools.",
   schema: z.object({
     question: z.string().min(3).max(400),
     options: z.array(z.string().min(1).max(80)).max(4).optional(),

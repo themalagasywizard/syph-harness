@@ -256,10 +256,15 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
     if (ended) {
       stopReason = ended.reason;
       question = ended.question;
-      const text = question ? [question.question, ...question.options.map((o) => `- ${o}`)].join("\n") : "";
-      messages.push({ role: "assistant", content: text });
-      emit({ type: "token", text });
-      return result(text);
+      const intro = res.content.trim();
+      const qText = question ? [question.question, ...question.options.map((o) => `- ${o}`)].join("\n") : "";
+      const historyText = intro ? (qText ? `${intro}\n\n${qText}` : intro) : qText;
+      messages.push({ role: "assistant", content: historyText });
+      // Keep any streamed explanation text (`intro`) so the UI renders it ABOVE the question card
+      // instead of wiping it when ask_user ends the turn.
+      const displayText = intro || qText;
+      if (!intro && qText) emit({ type: "token", text: qText });
+      return result(displayText);
     }
     if (!stuck && !finalNudge && idleSteps >= IDLE_STOP) {
       stuck = `${idleSteps} steps in a row only recorded notes or plans without doing the work`;

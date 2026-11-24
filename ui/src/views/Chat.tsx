@@ -314,7 +314,15 @@ function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, sta
         {turn.failure?.kind === "credits" && !streaming ? (
           <CreditsCard failure={turn.failure} onRetry={last ? onRetry : undefined} disabled={busy} />
         ) : turn.question && !streaming ? (
-          <QuestionCard question={turn.question} onAnswer={(a) => onSend?.(a)} onPickModel={onPickModel} disabled={!last || busy} />
+          <>
+            {(() => {
+              const trimmed = turn.content?.trim() ?? "";
+              const bare = [turn.question.question, ...turn.question.options.map((o) => `- ${o}`)].join("\n").trim();
+              const hasIntro = !!trimmed && trimmed !== bare && trimmed !== turn.question.question.trim();
+              return hasIntro ? <Markdown text={turn.content} /> : null;
+            })()}
+            <QuestionCard question={turn.question} onAnswer={(a) => onSend?.(a)} onPickModel={onPickModel} disabled={!last || busy} />
+          </>
         ) : turn.content ? (
           <Markdown text={turn.content} />
         ) : (
@@ -507,7 +515,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             for (const f of e.files) all.set(f.path, { ...f, action: all.get(f.path)?.action === "created" ? "created" : f.action });
             return { ...t, files: [...all.values()] };
           }
-          case "message": return t.content && (e as any).message?.tool_calls?.length ? { ...t, content: "" } : t;
+          case "message": return t.content && (e as any).message?.tool_calls?.some((c: any) => c?.function?.name !== "ask_user") ? { ...t, content: "" } : t;
           case "steer": return { ...t, steering: [...(t.steering ?? []), e.text] };
           case "checks": return { ...t, checks: e.checks };
           default: return t;

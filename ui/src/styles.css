@@ -747,7 +747,7 @@ textarea.input { resize: vertical; min-height: 96px; line-height: 1.55; }
 .input.mono { font-family: var(--mono); font-size: 12.5px; }
 @media (max-width: 640px) { .dw-row { grid-template-columns: 1fr 32px; } .dw-row .mono { grid-column: 1; } }
 
-.ask-card { border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; margin-bottom: 6px; }
+.ask-card { border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; margin: 10px 0 6px; }
 .ask-q { display: flex; gap: 9px; align-items: flex-start; font-weight: 500; }
 .ask-q svg { flex-shrink: 0; margin-top: 3px; color: var(--accent); }
 .ask-opts { display: flex; flex-wrap: wrap; gap: 6px; }

@@ -589,7 +589,7 @@ export class Harness {
       // Keep the replay buffer small: consecutive tokens are merged.
       if (e.type === "token" && last?.type === "token") run.events[run.events.length - 1] = { type: "token", text: last.text + e.text };
       else if (e.type !== "step" && e.type !== "message") run.events.push(e);
-      else if (e.type === "message" && (e.message as ChatMessage).tool_calls?.length) run.events.push({ type: "note", text: "", reset: true });
+      else if (e.type === "message" && (e.message as ChatMessage).tool_calls?.some((c) => c.function.name !== "ask_user")) run.events.push({ type: "note", text: "", reset: true });
       for (const l of run.listeners) l(e);
       if (e.type === "approval_request" || e.type === "approval_done") this.broadcast({ type: "chats" });
       if (record?.role === "thread") {

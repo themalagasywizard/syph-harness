@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { isLocalUrl, normalizeBrowserUrl } from "../src/browser.ts";
 import { browserOpenTool } from "../src/tools/browser.ts";
-import { searchWebGemini } from "../src/tools/search.ts";
+import { searchWebMiniMax } from "../src/tools/search.ts";
 import { Harness, store } from "../src/index.ts";
 import { call, mock, reply, tempHome } from "./helpers.ts";
 
@@ -76,32 +76,67 @@ test("Agent browser tools drive the live bridge, inspect DOM, and attach screens
   await h.close();
 });
 
-test("Headless web_search parses grounded Google Search results and citations cleanly", async () => {
+test("Headless web_search uses MiniMax Coding Plan search and falls back to MiniMax-M3.1-Flash without touching Gemini", async () => {
   const seenUrls: string[] = [];
-  const fakeFetch = (async (url: string) => {
+  const planFetch = (async (url: string) => {
     seenUrls.push(url);
     return new Response(
       JSON.stringify({
-        candidates: [
-          {
-            content: { parts: [{ text: "Vitrerie Montard (Veauche, 42): 06 58 07 75 11, no standalone website." }] },
-            groundingMetadata: {
-              groundingChunks: [
-                { web: { title: "Annuaire Entreprises", uri: "https://annuaire-entreprises.data.gouv.fr/entreprise/montard" } },
-              ],
-            },
-          },
+        organic: [
+          { title: "Vitrerie Montard — Veauche", link: "https://annuaire-entreprises.data.gouv.fr/entreprise/montard", snippet: "Tel: 06 58 07 75 11, artisan vitrier." },
         ],
-        usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 45 },
+        related_searches: [{ query: "Vitrerie Montard avis" }],
+        base_resp: { status_code: 0, status_msg: "success" },
       }),
       { status: 200, headers: { "content-type": "application/json" } },
     );
   }) as unknown as typeof fetch;
 
-  const res = await searchWebGemini("AIzaTestKey", { query: "Vitrerie Montard Veauche", fetch: fakeFetch });
+  const res = await searchWebMiniMax("sk-cp-test", { query: "Vitrerie Montard Veauche", fetch: planFetch });
   assert.equal(seenUrls.length, 1);
-  assert.match(seenUrls[0], /generativelanguage\.googleapis\.com/);
-  assert.match(res.answer, /06 58 07 75 11/);
+  assert.match(seenUrls[0], /api\.minimax\.io\/v1\/coding_plan\/search/);
+  assert.equal(res.via, "coding_plan");
   assert.equal(res.sources.length, 1);
-  assert.equal(res.sources[0].url, "https://annuaire-entreprises.data.gouv.fr/entreprise/montard");
+  assert.match(res.sources[0].snippet ?? "", /06 58 07 75 11/);
+
+  // Fallback to MiniMax-M3.1-Flash when coding_plan/search returns 403
+  const fallbackUrls: string[] = [];
+  const flashFetch = (async (url: string) => {
+    fallbackUrls.push(url);
+    if (url.includes("coding_plan/search")) return new Response("forbidden", { status: 403 });
+    return new Response(
+      JSON.stringify({
+        content: [
+          {
+            type: "text",
+            text: "Vitrerie Montard in Veauche (42): 06 58 07 75 11.",
+            citations: [{ title: "Annuaire", url: "https://annuaire-entreprises.data.gouv.fr/entreprise/montard" }],
+          },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as unknown as typeof fetch;
+
+  const res2 = await searchWebMiniMax("sk-standard-test", { query: "Vitrerie Montard Veauche", fetch: flashFetch });
+  assert.equal(res2.via, "minimax_flash");
+  assert.match(fallbackUrls[1], /anthropic\/v1\/messages/);
+  assert.match(res2.answer ?? "", /06 58 07 75 11/);
+  assert.equal(res2.sources[0]?.url, "https://annuaire-entreprises.data.gouv.fr/entreprise/montard");
+});
+
+test("ask_user preserves streamed explanation text instead of overwriting it with the bare question", async () => {
+  const home = tempHome();
+  const h = await new Harness(home).init({ mcp: false, scheduler: false });
+  mock("main", () =>
+    reply("Here is what I will do: I will update 15 Etsy listing tags using the official API, which respects Etsy TOS.", [
+      call("ask_user", { question: "Given the above, shall I go ahead?", options: ["Go ahead now", "Cancel"] }),
+    ]),
+  );
+  const chat = store.createChat(home, { title: "Etsy" });
+  const turn = await h.chat(chat.id, "Explain what you will do and if it respects Etsy TOS");
+  assert.equal(turn.stopReason, "question");
+  assert.equal(turn.question?.question, "Given the above, shall I go ahead?");
+  assert.match(turn.content, /respects Etsy TOS/, "explanation text before ask_user must be preserved");
+  await h.close();
 });
