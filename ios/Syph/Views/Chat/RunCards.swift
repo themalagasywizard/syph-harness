@@ -256,6 +256,8 @@ struct UsageBar: View {
 /// Wraps its children onto new lines, like the desktop's option buttons.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 8
+    /// Centre each row, like the desktop's new-chat pills.
+    var centered = false
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? .infinity
@@ -267,17 +269,29 @@ struct FlowLayout: Layout {
             row = max(row, s.height)
             widest = max(widest, x - spacing)
         }
-        return CGSize(width: min(widest, width), height: y + row)
+        return CGSize(width: centered && width.isFinite ? width : min(widest, width), height: y + row)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, row: CGFloat = 0
-        for v in subviews {
+        // Break into rows first, so each row can be centred when asked.
+        var rows: [[(Int, CGSize)]] = [[]]
+        var x: CGFloat = 0
+        for (i, v) in subviews.enumerated() {
             let s = v.sizeThatFits(.init(width: bounds.width, height: nil))
-            if x > bounds.minX && x + s.width > bounds.maxX { y += row + spacing; x = bounds.minX; row = 0 }
-            v.place(at: CGPoint(x: x, y: y), proposal: .init(s))
+            if x > 0 && x + s.width > bounds.width { rows.append([]); x = 0 }
+            rows[rows.count - 1].append((i, s))
             x += s.width + spacing
-            row = max(row, s.height)
+        }
+        var y = bounds.minY
+        for row in rows where !row.isEmpty {
+            let w = row.reduce(0) { $0 + $1.1.width } + spacing * CGFloat(row.count - 1)
+            var px = centered ? bounds.minX + max(0, (bounds.width - w) / 2) : bounds.minX
+            let h = row.map(\.1.height).max() ?? 0
+            for (i, s) in row {
+                subviews[i].place(at: CGPoint(x: px, y: y), proposal: .init(s))
+                px += s.width + spacing
+            }
+            y += h + spacing
         }
     }
 }

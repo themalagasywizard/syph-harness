@@ -33,11 +33,16 @@ private struct ChatScreen: View {
     @State private var showFolders = false
     @State private var showTerminal = false
 
-    private static let suggestions: [(String, String)] = [
-        ("Turn what we did today into a reusable skill", "lightbulb"),
-        ("Schedule a daily summary of my research notes", "clock"),
-        ("Review your system prompt and suggest one improvement", "sparkles"),
-        ("Write a script that checks if my Ollama server is up", "chevron.left.forwardslash.chevron.right"),
+    /// The desktop's new-chat pills (ui/src/views/Chat.tsx).
+    private static let pills: [(label: String, prompt: String, icon: String)] = [
+        ("Turn work into a skill", "Turn what we did today into a reusable skill", "lightbulb"),
+        ("Schedule a task", "Schedule a daily summary of my research notes", "clock"),
+        ("Improve my prompt", "Review your system prompt and suggest one improvement", "sparkles"),
+    ]
+    private static let coordinatorPills: [(label: String, prompt: String, icon: String)] = [
+        ("Project status", "Give me a quick overview of this project's current state and threads.", "square.3.layers.3d"),
+        ("Inspect files", "Inspect the files and folders in this project and summarize the architecture.", "folder.badge.questionmark"),
+        ("Plan parallel work", "Help me break down our next steps into parallel worker threads.", "arrow.triangle.branch"),
     ]
 
     var body: some View {
@@ -180,51 +185,45 @@ private struct ChatScreen: View {
 
     // MARK: Empty state
 
+    /// Like the desktop's new-chat page: the living logo, a serif greeting and three pills, centred.
     private var hero: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("\(Fmt.greeting())")
-                .font(.system(size: 40, weight: .semibold, design: .rounded))
-                .foregroundStyle(Palette.accentGradient)
-            Text("What should we work on?")
-                .font(.system(size: 40, weight: .semibold, design: .rounded))
-                .foregroundStyle(Palette.faint)
-            if let p = vm.project {
-                HStack(spacing: 6) {
-                    Circle().fill(Color(hex: p.color ?? "#888")).frame(width: 8, height: 8)
-                    Text("In \(p.name)").font(.subheadline.weight(.medium)).foregroundStyle(Palette.muted)
-                }
-                .padding(.top, 8)
+        VStack(spacing: 14) {
+            LivingMark(size: 64, mode: .streaming)
+                .padding(.bottom, 6)
+            if vm.isCoordinator {
+                HeroEyebrow(icon: "arrow.triangle.branch", text: "Coordinator")
+                Text(vm.project?.name ?? "Project").font(.serif(40)).heroTitle()
+            } else {
+                if let p = vm.project { HeroEyebrow(icon: "folder", text: p.name) }
+                Text("\(Fmt.greeting()).").font(.serif(40)).heroTitle()
             }
+            FlowLayout(spacing: 8, centered: true) {
+                ForEach(vm.isCoordinator ? Self.coordinatorPills : Self.pills, id: \.label) { p in
+                    Button { Task { await vm.send(p.prompt) } } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: p.icon).font(.system(size: 13)).foregroundStyle(Palette.faint)
+                            Text(p.label).font(.system(size: 14)).foregroundStyle(Palette.muted)
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(height: 36)
+                        .background(Palette.surface.opacity(0.65), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Palette.stroke))
+                    }
+                    .buttonStyle(.pressable)
+                }
+            }
+            .padding(.top, 12)
         }
-        .padding(.top, 70)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
+        .padding(.bottom, 40)
+        .containerRelativeFrame(.vertical, alignment: .center)
     }
 
     // MARK: Chat bar
 
     private var composer: some View {
         VStack(spacing: 10) {
-            if vm.isEmpty && vm.draft.isEmpty && !focused {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(Self.suggestions, id: \.0) { s in
-                            Button { Task { await vm.send(s.0) } } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: s.1).foregroundStyle(Palette.accent)
-                                    Text(s.0).foregroundStyle(Palette.text).lineLimit(2).multilineTextAlignment(.leading)
-                                }
-                                .font(.subheadline.weight(.medium))
-                                .frame(width: 210, alignment: .leading)
-                                .padding(.horizontal, 14).padding(.vertical, 12)
-                                .glass(radius: 20, interactive: true)
-                            }
-                            .buttonStyle(.pressable)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
             Group {
                 if let e = vm.error { ErrorBanner(text: e).transition(.move(edge: .bottom).combined(with: .opacity)) }
                 if vm.noKey {
@@ -276,7 +275,7 @@ private struct ChatScreen: View {
             .padding(.leading, 6)
             .padding(.trailing, 6)
             .padding(.vertical, 6)
-            .glass(radius: 26)
+            .glass(radius: 24)
             .padding(.horizontal, 12)
             }
             if vm.live != nil {
@@ -780,5 +779,27 @@ struct TypingDots: View {
             }
         }
         .padding(.vertical, 6)
+    }
+}
+
+/// The small pill above the new-chat title (a project's name, or "Coordinator").
+private struct HeroEyebrow: View {
+    var icon: String
+    var text: String
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 11))
+            Text(text).font(.system(size: 12, weight: .medium)).tracking(0.2)
+        }
+        .foregroundStyle(Palette.muted)
+        .padding(.horizontal, 11).padding(.vertical, 4)
+        .background(Palette.surface.opacity(0.75), in: Capsule())
+        .overlay(Capsule().strokeBorder(Palette.stroke))
+    }
+}
+
+private extension Text {
+    func heroTitle() -> some View {
+        self.tracking(-0.6).lineSpacing(2).foregroundStyle(Palette.text).lineLimit(2).minimumScaleFactor(0.7)
     }
 }

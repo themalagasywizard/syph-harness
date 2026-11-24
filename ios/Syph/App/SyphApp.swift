@@ -36,18 +36,17 @@ struct RootView: View {
                 }
             }
             .animation(.smooth(duration: 0.45), value: app.connection)
-            .scaleEffect(launching ? 0.96 : 1)
             .opacity(launching ? 0 : 1)
 
             if launching {
                 LaunchView(onFinish: {
-                    withAnimation(.smooth(duration: 0.7)) { launching = false }
+                    withAnimation(.easeOut(duration: 0.5)) { launching = false }
                 }, ready: app.booted)
-                .transition(.opacity.combined(with: .scale(scale: 1.08)))
+                .transition(.opacity)
                 .zIndex(1)
             }
         }
-        .background(Color(hex: "#060606").ignoresSafeArea())
+        .background(Palette.bg.ignoresSafeArea())
     }
 }
 

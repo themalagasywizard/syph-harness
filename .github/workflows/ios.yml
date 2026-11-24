@@ -39,12 +39,20 @@ jobs:
           xcrun simctl install "$DEV" "$APP"
           mkdir -p shots
           xcrun simctl launch "$DEV" app.syph.ios -syphDemoTab chat:c-digest
-          for t in 0.5 0.9 1.4 1.9 2.4 2.9 3.4; do sleep 0.5; xcrun simctl io "$DEV" screenshot "shots/launch-$t.png"; done
+          for t in 01 02 03 04 05 06 07 08 09 10; do sleep 0.25; xcrun simctl io "$DEV" screenshot "shots/launch-$t.png"; done
           sleep 3; xcrun simctl io "$DEV" screenshot shots/chat.png
-          for tab in menu projects skills settings; do
+          for tab in new menu projects skills settings; do
             xcrun simctl terminate "$DEV" app.syph.ios || true
             xcrun simctl launch "$DEV" app.syph.ios -syphDemoTab $tab
             sleep 7; xcrun simctl io "$DEV" screenshot "shots/$tab.png"
+          done
+      - name: Thumbnails in the log (for review without downloading the artifact)
+        run: |
+          mkdir -p thumbs
+          for f in shots/*.png; do
+            n=$(basename "$f" .png)
+            sips -Z 360 -s format jpeg -s formatOptions 45 "$f" --out "thumbs/$n.jpg" >/dev/null
+            echo "THUMB $n $(base64 -i "thumbs/$n.jpg" | tr -d '\n')"
           done
       - uses: actions/upload-artifact@v4
         with:
