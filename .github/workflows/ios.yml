@@ -29,3 +29,24 @@ jobs:
       - name: Show errors
         if: failure()
         run: grep -E "error:" build.log | sort -u | head -100 || true
+      - name: Screenshots in the Simulator (demo data)
+        run: |
+          set -x
+          APP=$(find ios/build -name "Syph.app" -type d | head -1)
+          DEV=$(xcrun simctl list devices available | grep -E "iPhone 1[6-9]|iPhone 2" | grep -v Plus | head -1 | grep -oE "[0-9A-F-]{36}")
+          xcrun simctl boot "$DEV"
+          xcrun simctl bootstatus "$DEV" -b
+          xcrun simctl install "$DEV" "$APP"
+          mkdir -p shots
+          xcrun simctl launch "$DEV" app.syph.ios -syphDemoTab chat:c-digest
+          for t in 0.5 0.9 1.4 1.9 2.4 2.9 3.4; do sleep 0.5; xcrun simctl io "$DEV" screenshot "shots/launch-$t.png"; done
+          sleep 3; xcrun simctl io "$DEV" screenshot shots/chat.png
+          for tab in menu projects skills settings; do
+            xcrun simctl terminate "$DEV" app.syph.ios || true
+            xcrun simctl launch "$DEV" app.syph.ios -syphDemoTab $tab
+            sleep 7; xcrun simctl io "$DEV" screenshot "shots/$tab.png"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: shots/
