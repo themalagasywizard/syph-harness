@@ -9,7 +9,7 @@ export const resetModels = () => {
   cache = null;
 };
 
-const PROVIDER_LABEL: Record<string, string> = { openrouter: "OpenRouter", minimax: "MiniMax", ollama: "Local · Ollama", lmstudio: "Local · LM Studio" };
+const PROVIDER_LABEL: Record<string, string> = { openrouter: "OpenRouter", minimax: "MiniMax", gemini: "Google Gemini", ollama: "Local · Ollama", lmstudio: "Local · LM Studio" };
 
 // The models picked most recently, newest first, so the menu opens on the few you actually use.
 const RECENT_KEY = "syph.recentModels";
@@ -36,7 +36,7 @@ const EFFORT_LABEL: Record<Effort, string> = { auto: "Auto", low: "Low", medium:
 export function effortLevels(ref?: string): Effort[] {
   const provider = ref && ref.indexOf(":") > 0 ? ref.slice(0, ref.indexOf(":")) : "openrouter";
   if (provider === "minimax") return ["auto", "low", "medium", "high", "xhigh", "max"];
-  if (provider === "openrouter") return ["auto", "low", "medium", "high"];
+  if (provider === "openrouter" || provider === "gemini") return ["auto", "low", "medium", "high"];
   return [];
 }
 

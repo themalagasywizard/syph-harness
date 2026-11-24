@@ -90,7 +90,16 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
   let question: AgentResult["question"];
   // A tool (ask_user) can end the turn once this step's tools have run.
   let endTurn: { reason: StopReason; question?: AgentResult["question"] } | null = null;
-  const ctx: ToolContext | undefined = run.ctx && { ...run.ctx, hooks: { ...run.ctx.hooks, endTurn: (q) => void (endTurn = { reason: "question", question: q }) } };
+  let pendingImages: string[] = [];
+  const ctx: ToolContext | undefined =
+    run.ctx && {
+      ...run.ctx,
+      hooks: {
+        ...run.ctx.hooks,
+        endTurn: (q) => void (endTurn = { reason: "question", question: q }),
+        attachImage: (dataUrl) => void pendingImages.push(dataUrl),
+      },
+    };
   const calls = new Map<string, number>();
   let stuckCount = 0;
   let idleSteps = 0;
@@ -229,6 +238,18 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
       }
       emit({ type: "tool_result", id: call.id, name, ok, result, ms: Date.now() - t0 });
       messages.push({ role: "tool", tool_call_id: call.id, name, content: result });
+    }
+
+    if (pendingImages.length) {
+      const imgs = pendingImages.splice(0);
+      const prof = getProfile(run.home, run.model);
+      if (prof.vision !== false) {
+        messages.push({
+          role: "user",
+          content: "[In-app browser screenshot attached for visual inspection. Check layout, alignment, contrast, and polish, then fix any issues.]",
+          images: imgs,
+        });
+      }
     }
 
     const ended = endTurn as { reason: StopReason; question?: AgentResult["question"] } | null;

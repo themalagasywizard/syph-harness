@@ -367,14 +367,28 @@ export interface Profile {
 
 export interface Config {
   providers: { name: string; baseUrl: string; apiKeyEnv?: string }[];
-  defaults: { chatModel: string; taskModel: string; reflectorModel: string; judgeModel: string; effort?: Effort };
-  budgets: { dailyUsd: { chat: number; tasks: number; evolve: number } };
+  defaults: { chatModel: string; taskModel: string; frontendModel?: string; reflectorModel: string; judgeModel: string; effort?: Effort };
+  budgets: { dailyUsd: { chat: number; tasks: number; evolve: number }; geminiMonthlyCreditUsd?: number };
   approval: { autoAccept: { memory: boolean; skill: boolean }; yolo?: boolean; yoloTasks?: boolean; allowCommands?: string[]; taskCommands?: string[]; terminal?: "ask" | "auto" };
   agent?: { shortSteps?: number; maxUsdPerRun?: number; maxMinutes?: number; longSteps?: number; longMinutes?: number; maxUsdPerLongRun?: number; reviewAfterErrors?: number; gitCheckpoints?: boolean; lazyTools?: boolean; maxThreads?: number; coordinatorWakesPerHour?: number; threadBriefs?: boolean };
   evolve: { samplesPerCase: number; maxAttempts: number; heldOutFraction: number };
   killSwitch: boolean;
   hasOpenRouterKey: boolean;
   hasMiniMaxKey?: boolean;
+  hasGeminiKey?: boolean;
+}
+
+export interface BrowserState {
+  open: boolean;
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  agentActive: boolean;
+  consoleErrors: string[];
+  devtoolsOpen: boolean;
+  native: boolean;
 }
 
 export interface AppState {
@@ -390,6 +404,7 @@ export interface AppState {
   homePath: string;
   workspacePath?: string;
   github?: GithubState;
+  browser?: BrowserState;
 }
 
 export interface EvalSummary {
@@ -495,6 +510,7 @@ export const modelLabel = (ref?: string) => {
   const provider = i > 0 ? ref.slice(0, i) : "openrouter";
   const model = i > 0 ? ref.slice(i + 1) : ref;
   if (provider === "minimax") return model.replace(/^MiniMax-/, "MiniMax ").replace(/-/g, " ");
+  if (provider === "gemini") return model.replace(/^models\//, "").replace(/^gemini-/, "Gemini ").replace(/-/g, " ").replace(/\b(\w)/g, (c) => c.toUpperCase());
   if (provider !== "openrouter") return `${model} · ${provider}`;
   const name = model.split("/").pop()!;
   return name.replace(/^deepseek-/, "DeepSeek ").replace(/-/g, " ").replace(/\b(\w)/g, (c) => c.toUpperCase());

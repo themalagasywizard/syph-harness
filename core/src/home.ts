@@ -78,7 +78,7 @@ export class Home {
       writeText(this.path(".syph-version"), "1\n");
     }
     for (const d of ["traces", "proposals", "history", "chats", "projects", "workspace", "examples", "evals/cases", "evals/results", "extensions", "profiles"]) ensureDir(this.path(d));
-    if (!existsSync(this.path(".env"))) writeText(this.path(".env"), "# OPENROUTER_API_KEY=sk-or-...\n# MINIMAX_API_KEY=...\n");
+    if (!existsSync(this.path(".env"))) writeText(this.path(".env"), "# OPENROUTER_API_KEY=sk-or-...\n# MINIMAX_API_KEY=...\n# GEMINI_API_KEY=AIza...\n");
     return this;
   }
 

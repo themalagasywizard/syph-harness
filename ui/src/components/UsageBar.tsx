@@ -11,17 +11,19 @@ export interface UsageMeter {
   resetsAt?: number;
 }
 
+export type UsageProviderId = "minimax" | "openrouter" | "gemini";
+
 export interface ProviderUsage {
-  provider: "minimax" | "openrouter";
+  provider: UsageProviderId;
   meters: UsageMeter[];
   checkedAt: number;
   error?: string;
 }
 
-/** "minimax:MiniMax-M3.1-Flash" → the provider with a usage endpoint, and the model name it knows. */
-export function usageProvider(model?: string): { provider: "minimax" | "openrouter"; model: string } | null {
-  const m = /^(minimax|openrouter):(.+)$/.exec(model ?? "");
-  return m ? { provider: m[1] as "minimax" | "openrouter", model: m[2] } : null;
+/** "minimax:MiniMax-M3.1-Flash" or "gemini:gemini-2.5-pro" → provider with a usage meter + model name. */
+export function usageProvider(model?: string): { provider: UsageProviderId; model: string } | null {
+  const m = /^(minimax|openrouter|gemini):(.+)$/.exec(model ?? "");
+  return m ? { provider: m[1] as UsageProviderId, model: m[2] } : null;
 }
 
 const frac = (m: UsageMeter) => (m.total > 0 ? Math.min(1, Math.max(0, m.used / m.total)) : 0);
@@ -46,7 +48,7 @@ function amount(m: UsageMeter) {
 }
 
 /** Fetch usage for a provider; `bump` refetches (after a reply), and it refreshes every 3 minutes. */
-export function useUsage(provider?: "minimax" | "openrouter", model?: string, bump = 0) {
+export function useUsage(provider?: UsageProviderId, model?: string, bump = 0) {
   const [usage, setUsage] = useState<ProviderUsage | null>(null);
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -91,7 +93,7 @@ export function UsageBar({ model, bump }: { model?: string; bump?: number }) {
   if (!p || !usage?.meters.length) return null;
   const top = tightest(usage.meters);
   const f = frac(top);
-  const name = p.provider === "minimax" ? "MiniMax plan" : "OpenRouter";
+  const name = p.provider === "minimax" ? "MiniMax plan" : p.provider === "gemini" ? "Google Gemini" : "OpenRouter";
   return (
     <div className="usage-bar" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} onClick={() => setOpen((o) => !o)}>
       <button className={`usage-chip ${level(f)}`} aria-label={`${name}: ${Math.round(f * 100)}% of ${top.label.toLowerCase()} used`}>
@@ -109,13 +111,13 @@ export function UsageBar({ model, bump }: { model?: string; bump?: number }) {
 }
 
 /** The card in Settings: every meter, its reset time, and a refresh. */
-export function UsageCard({ provider }: { provider: "minimax" | "openrouter" }) {
-  const { usage, refresh } = useUsage(provider);
+export function UsageCard({ provider, bump = 0 }: { provider: UsageProviderId; bump?: number }) {
+  const { usage, refresh } = useUsage(provider, undefined, bump);
   if (!usage) return null;
   return (
     <div className="usage-card">
       <div className="uc-head">
-        <span className="hint">{provider === "minimax" ? "Plan usage" : "Balance"}</span>
+        <span className="hint">{provider === "minimax" ? "Plan usage" : provider === "gemini" ? "Monthly free credit" : "Balance"}</span>
         <button className="icon-btn sm" title="Refresh" onClick={refresh}><RefreshCw size={14} /></button>
       </div>
       {usage.meters.length ? (
@@ -125,6 +127,9 @@ export function UsageCard({ provider }: { provider: "minimax" | "openrouter" }) 
       )}
       {provider === "minimax" && (
         <a className="hint" href="https://platform.minimax.io/console/usage" target="_blank" rel="noreferrer">See usage on MiniMax</a>
+      )}
+      {provider === "gemini" && (
+        <a className="hint" href="https://aistudio.google.com/usage" target="_blank" rel="noreferrer">Check Google AI Studio billing</a>
       )}
     </div>
   );

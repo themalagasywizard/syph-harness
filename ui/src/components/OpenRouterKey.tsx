@@ -35,7 +35,7 @@ function CheckLine({ check }: { check?: KeyCheck }) {
 }
 
 interface KeyProvider {
-  id: "openrouter" | "minimax";
+  id: "openrouter" | "minimax" | "gemini";
   placeholder: string;
   link: { href: string; text: string };
   hint: ReactNode;
@@ -55,6 +55,13 @@ const MINIMAX: KeyProvider = {
   hint: ": the key on your subscription's plan page, or a pay-as-you-go API key. Syph checks it with MiniMax, saves it to the .env in your Syph data folder, and the first time makes MiniMax M3.1 Flash your chat and tasks model.",
 };
 
+const GEMINI: KeyProvider = {
+  id: "gemini",
+  placeholder: "AIza…",
+  link: { href: "https://aistudio.google.com/apikey", text: "aistudio.google.com/apikey" },
+  hint: " (linked to your Google AI Pro monthly credits). Syph checks it with Google, saves it in your .env, and routes frontend website threads & studio image generation to Gemini while keeping everyday chats on your cheap default model.",
+};
+
 /** Add, check, replace or remove the OpenRouter key. The server only ever returns a masked form of it. */
 export function OpenRouterKey({ onChange }: { onChange: () => void }) {
   return <ProviderKey provider={OPENROUTER} onChange={onChange} />;
@@ -63,6 +70,11 @@ export function OpenRouterKey({ onChange }: { onChange: () => void }) {
 /** The same for the MiniMax key (pay-as-you-go or the subscription's key). */
 export function MiniMaxKey({ onChange }: { onChange: () => void }) {
   return <ProviderKey provider={MINIMAX} onChange={onChange} />;
+}
+
+/** The same for the Google Gemini API key (Google AI Studio / AI Pro monthly credits). */
+export function GeminiKey({ onChange }: { onChange: () => void }) {
+  return <ProviderKey provider={GEMINI} onChange={onChange} />;
 }
 
 function ProviderKey({ provider, onChange }: { provider: KeyProvider; onChange: () => void }) {

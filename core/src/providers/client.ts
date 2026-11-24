@@ -72,7 +72,7 @@ export class CreditsError extends ProviderError {
 }
 
 export function providerName(provider: string) {
-  return provider === "openrouter" ? "OpenRouter" : provider === "minimax" ? "MiniMax" : provider;
+  return provider === "openrouter" ? "OpenRouter" : provider === "minimax" ? "MiniMax" : provider === "gemini" ? "Google Gemini" : provider;
 }
 
 const CREDIT_TEXT = /requires more credits|can only afford|insufficient (account )?(balance|credits?|funds|quota)|out of credits|balance (is )?(not enough|insufficient)|exceeded your current quota|payment required|usage limit (exceeded|reached)|plan limit/i;
@@ -107,6 +107,7 @@ export const httpTransport: Transport = async (req) => {
 
 async function once(req: CompletionRequest): Promise<CompletionResult> {
   const minimax = req.provider === "minimax" || /\/\/api\.minimaxi?\.(io|com)\b/.test(req.baseUrl);
+  const gemini = req.provider === "gemini" || /generativelanguage\.googleapis\.com\b/.test(req.baseUrl);
   const body: Record<string, unknown> = {
     model: req.model,
     messages: wireMessages(req.messages, req.cache, minimax),
@@ -120,6 +121,10 @@ async function once(req: CompletionRequest): Promise<CompletionResult> {
     // must be sent back with the tool calls it led to. It has no JSON mode, so JSON is asked for in the prompt.
     body.reasoning_split = true;
     if (req.effort) body.reasoning_effort = req.effort; // low, medium, high, xhigh, max
+  } else if (gemini) {
+    // Google AI Studio OpenAI-compatible endpoint rejects OpenRouter-only fields like top-level `usage`.
+    if (req.effort) body.reasoning_effort = req.effort === "low" || req.effort === "medium" ? req.effort : "high";
+    if (req.jsonMode) body.response_format = { type: "json_object" };
   } else {
     // OpenRouter takes low, medium or high and maps it onto each model's own reasoning setting.
     if (req.effort && req.provider === "openrouter") body.reasoning = { effort: req.effort === "low" || req.effort === "medium" ? req.effort : "high" };

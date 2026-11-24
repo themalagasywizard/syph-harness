@@ -3,13 +3,14 @@ import { createServer, type Server } from "node:http";
 import { test } from "node:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Harness } from "../src/harness.ts";
 import { canAccess, preview } from "../src/files/index.ts";
 import { checkUi, listUi, resetUi } from "../src/ui-ext.ts";
 import * as store from "../src/store.ts";
 import { call, mock, reply, tempHome } from "./helpers.ts";
 
-const fixture = (n: string) => new URL(`./fixtures/${n}`, import.meta.url).pathname;
+const fixture = (n: string) => fileURLToPath(new URL(`./fixtures/${n}`, import.meta.url));
 
 test("previews: PowerPoint slides with text, table, chart and picture; Word as HTML; Excel as sheets", () => {
   const deck: any = preview(fixture("deck.pptx"));
@@ -47,7 +48,7 @@ test("a run's new and changed files are tracked with full paths, from write_file
   const project = store.createProject(home, { name: "Board" });
   const chat = store.createChat(home, { projectId: project.id });
   const folder = store.workspaceFor(home, project.id);
-  const script = process.platform === "win32" ? "Set-Content -Path reports/out.txt -Value hi" : "mkdir -p reports && printf hi > reports/out.txt";
+  const script = process.platform === "win32" ? "New-Item -ItemType Directory -Force -Path reports | Out-Null; Set-Content -Path reports/out.txt -Value hi" : "mkdir -p reports && printf hi > reports/out.txt";
   let step = 0;
   mock("main", () => {
     step++;

@@ -2,16 +2,18 @@
   "providers": [
     { "name": "openrouter", "baseUrl": "https://openrouter.ai/api/v1", "apiKeyEnv": "OPENROUTER_API_KEY" },
     { "name": "minimax", "baseUrl": "https://api.minimax.io/v1", "apiKeyEnv": "MINIMAX_API_KEY" },
+    { "name": "gemini", "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai", "apiKeyEnv": "GEMINI_API_KEY" },
     { "name": "ollama", "baseUrl": "http://localhost:11434/v1" },
     { "name": "lmstudio", "baseUrl": "http://localhost:1234/v1" }
   ],
   "defaults": {
     "chatModel": "openrouter:deepseek/deepseek-v4.1-flash",
     "taskModel": "openrouter:deepseek/deepseek-v4.1-flash",
+    "frontendModel": "",
     "reflectorModel": "openrouter:deepseek/deepseek-v4-pro",
     "judgeModel": "openrouter:deepseek/deepseek-v4-pro"
   },
-  "budgets": { "dailyUsd": { "chat": 2, "tasks": 1, "evolve": 2 } },
+  "budgets": { "dailyUsd": { "chat": 2, "tasks": 1, "evolve": 2 }, "geminiMonthlyCreditUsd": 10 },
   "approval": { "autoAccept": { "memory": false, "skill": false }, "yolo": false, "yoloTasks": false, "allowCommands": [], "taskCommands": [] },
   "evolve": { "samplesPerCase": 2, "maxAttempts": 3, "heldOutFraction": 0.2 },
   "killSwitch": false,

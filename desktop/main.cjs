@@ -1,7 +1,7 @@
 // Syph desktop shell. It runs the same local server as `npm start` in a child
 // process, opens it in a window, and keeps living in the tray when the window
 // is closed, so scheduled Tasks keep running. Quit from the tray menu.
-const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, nativeTheme, shell, dialog } = require("electron");
+const { app, BrowserWindow, WebContentsView, Menu, Tray, ipcMain, nativeImage, nativeTheme, shell, dialog } = require("electron");
 const { spawn } = require("node:child_process");
 const net = require("node:net");
 const path = require("node:path");
@@ -14,6 +14,295 @@ let tray = null;
 let server = null;
 let url = null;
 let quitting = false;
+
+// ---------- In-App Browser (Electron WebContentsView, isolated partition) ----------
+let browserView = null;
+let browserAttached = false;
+let browserVisible = false;
+let browserBounds = { x: 0, y: 0, width: 0, height: 0 };
+const browserState = {
+  open: false,
+  url: "",
+  title: "",
+  loading: false,
+  canGoBack: false,
+  canGoForward: false,
+  agentActive: false,
+  consoleErrors: [],
+  devtoolsOpen: false,
+  native: true,
+};
+
+function normalizeUrl(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (/^https?:\/\//i.test(s)) return s;
+  if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(s)) return `http://${s}`;
+  if (/^:\d+/.test(s)) return `http://localhost${s}`;
+  return `https://${s}`;
+}
+
+function emitBrowserState() {
+  const snap = { ...browserState, consoleErrors: [...browserState.consoleErrors] };
+  if (win && !win.isDestroyed()) win.webContents.send("syph:browser:state", snap);
+  if (server && server.connected) server.send({ type: "syph:browser:state", state: snap });
+}
+
+function syncBrowserNav() {
+  if (!browserView || browserView.webContents.isDestroyed()) return;
+  const wc = browserView.webContents;
+  const cur = wc.getURL();
+  if (cur && cur !== "about:blank") browserState.url = cur;
+  browserState.title = wc.getTitle() || browserState.title;
+  browserState.canGoBack = wc.navigationHistory ? wc.navigationHistory.canGoBack() : wc.canGoBack();
+  browserState.canGoForward = wc.navigationHistory ? wc.navigationHistory.canGoForward() : wc.canGoForward();
+  browserState.devtoolsOpen = wc.isDevToolsOpened();
+  emitBrowserState();
+}
+
+function applyBrowserBounds() {
+  if (!win || win.isDestroyed() || !browserView) return;
+  const show = browserState.open && browserVisible && browserBounds.width > 20 && browserBounds.height > 20;
+  if (show) {
+    if (!browserAttached) {
+      win.contentView.addChildView(browserView);
+      browserAttached = true;
+    }
+    browserView.setBounds(browserBounds);
+  } else if (browserAttached) {
+    win.contentView.removeChildView(browserView);
+    browserAttached = false;
+  }
+}
+
+function ensureBrowserView() {
+  if (browserView && !browserView.webContents.isDestroyed()) return browserView;
+  browserView = new WebContentsView({
+    webPreferences: {
+      partition: "persist:syph-browser",
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      plugins: true,
+    },
+  });
+  const wc = browserView.webContents;
+  wc.setBackgroundColor("#ffffff");
+  wc.setWindowOpenHandler(({ url: target }) => {
+    if (/^https?:\/\//i.test(target)) wc.loadURL(target).catch(() => {});
+    return { action: "deny" };
+  });
+  wc.on("did-start-loading", () => {
+    browserState.loading = true;
+    emitBrowserState();
+  });
+  wc.on("did-stop-loading", () => {
+    browserState.loading = false;
+    syncBrowserNav();
+  });
+  wc.on("did-navigate", () => syncBrowserNav());
+  wc.on("did-navigate-in-page", () => syncBrowserNav());
+  wc.on("page-title-updated", (_e, title) => {
+    browserState.title = title;
+    emitBrowserState();
+  });
+  wc.on("did-fail-load", (_e, code, desc, validatedURL) => {
+    if (code === -3) return; // aborted navigation
+    browserState.loading = false;
+    browserState.consoleErrors = [...browserState.consoleErrors.slice(-19), `Load failed (${code}): ${desc} — ${validatedURL}`];
+    emitBrowserState();
+  });
+  wc.on("console-message", (_e, level, message) => {
+    if (level >= 3) {
+      browserState.consoleErrors = [...browserState.consoleErrors.slice(-19), String(message).slice(0, 300)];
+      emitBrowserState();
+    }
+  });
+  wc.on("devtools-opened", () => syncBrowserNav());
+  wc.on("devtools-closed", () => syncBrowserNav());
+  return browserView;
+}
+
+const INSPECT_JS = `(() => {
+  const qs = (s) => [...document.querySelectorAll(s)];
+  const imgs = qs('img');
+  const brokenImages = imgs.filter((i) => i.complete && i.naturalWidth === 0).map((i) => i.getAttribute('src') || '(no src)').slice(0, 12);
+  const headings = qs('h1,h2,h3').map((h) => h.tagName + ': ' + (h.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 80)).filter(Boolean).slice(0, 20);
+  const bodyCs = getComputedStyle(document.body);
+  const h1 = document.querySelector('h1');
+  const h1Cs = h1 ? getComputedStyle(h1) : null;
+  const colors = new Set();
+  for (const el of qs('body,header,nav,section,button,a,[class*="btn"],[class*="card"]').slice(0, 60)) {
+    const cs = getComputedStyle(el);
+    if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)') colors.add(cs.backgroundColor);
+    if (cs.color) colors.add(cs.color);
+  }
+  const interactive = qs('a[href],button,input,select,[role="tab"]').filter((el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 4 && r.height > 4;
+  }).slice(0, 28).map((el) => {
+    const id = el.id ? '#' + el.id : '';
+    const text = (el.textContent || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').replace(/\\s+/g, ' ').trim().slice(0, 48);
+    return { tag: el.tagName.toLowerCase(), id, text };
+  });
+  return {
+    title: document.title,
+    url: location.href,
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+    documentHeight: document.documentElement.scrollHeight,
+    horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth + 2,
+    fonts: { body: bodyCs.fontFamily, h1: h1Cs ? h1Cs.fontFamily : null },
+    paletteSample: [...colors].slice(0, 14),
+    headings,
+    imageCount: imgs.length,
+    brokenImages,
+    interactive,
+  };
+})()`;
+
+async function waitForLoad(wc, timeoutMs = 15000) {
+  if (!wc.isLoading()) return;
+  await new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(t);
+      wc.removeListener("did-stop-loading", done);
+      wc.removeListener("did-fail-load", done);
+      resolve();
+    };
+    const t = setTimeout(done, timeoutMs);
+    wc.once("did-stop-loading", done);
+    wc.once("did-fail-load", done);
+  });
+  await new Promise((r) => setTimeout(r, 350));
+}
+
+async function handleBrowserCommand(cmd, fromAgent = false) {
+  const action = cmd?.action;
+  if (action === "state") return { ...browserState, consoleErrors: [...browserState.consoleErrors] };
+  if (action === "close") {
+    browserState.open = false;
+    browserState.agentActive = false;
+    browserVisible = false;
+    applyBrowserBounds();
+    emitBrowserState();
+    return { ok: true, state: { ...browserState } };
+  }
+
+  if (fromAgent) {
+    browserState.agentActive = true;
+    emitBrowserState();
+  }
+  try {
+    const view = ensureBrowserView();
+    const wc = view.webContents;
+
+    if (action === "open" || action === "navigate") {
+      const target = normalizeUrl(cmd.url);
+      browserState.open = true;
+      if (fromAgent) show();
+      emitBrowserState();
+      if (target) {
+        browserState.consoleErrors = [];
+        browserState.url = target;
+        emitBrowserState();
+        try {
+          await wc.loadURL(target);
+        } catch (err) {
+          if (!String(err).includes("ERR_ABORTED")) throw err;
+        }
+        await waitForLoad(wc);
+        syncBrowserNav();
+      }
+      applyBrowserBounds();
+      return { ok: true, url: browserState.url, title: browserState.title, consoleErrors: browserState.consoleErrors };
+    }
+    if (action === "back") {
+      if (wc.navigationHistory ? wc.navigationHistory.canGoBack() : wc.canGoBack()) wc.goBack();
+      return { ok: true };
+    }
+    if (action === "forward") {
+      if (wc.navigationHistory ? wc.navigationHistory.canGoForward() : wc.canGoForward()) wc.goForward();
+      return { ok: true };
+    }
+    if (action === "reload") {
+      browserState.consoleErrors = [];
+      wc.reload();
+      return { ok: true };
+    }
+    if (action === "devtools") {
+      if (wc.isDevToolsOpened()) wc.closeDevTools();
+      else wc.openDevTools({ mode: "detach" });
+      syncBrowserNav();
+      return { ok: true, devtoolsOpen: wc.isDevToolsOpened() };
+    }
+    if (action === "external") {
+      if (browserState.url) shell.openExternal(browserState.url);
+      return { ok: true };
+    }
+    if (action === "screenshot") {
+      if (!browserAttached) {
+        browserState.open = true;
+        browserVisible = true;
+        if (browserBounds.width < 100 || browserBounds.height < 100) {
+          const [w, h] = win ? win.getContentSize() : [1280, 820];
+          browserBounds = { x: Math.floor(w * 0.45), y: 120, width: Math.max(480, Math.floor(w * 0.54)), height: Math.max(420, h - 130) };
+        }
+        applyBrowserBounds();
+        await new Promise((r) => setTimeout(r, 220));
+      }
+      const img = await wc.capturePage();
+      const png = img.toPNG();
+      return { ok: true, base64: png.toString("base64"), width: img.getSize().width, height: img.getSize().height, url: browserState.url, title: browserState.title };
+    }
+    if (action === "inspect") {
+      const data = await wc.executeJavaScript(INSPECT_JS, true);
+      return { ok: true, ...data, consoleErrors: browserState.consoleErrors };
+    }
+    if (action === "click") {
+      const sel = JSON.stringify(String(cmd.selector || ""));
+      const res = await wc.executeJavaScript(`(() => {
+        const el = document.querySelector(${sel});
+        if (!el) return { ok: false, error: 'Element not found: ' + ${sel} };
+        el.scrollIntoView({ behavior: 'instant', block: 'center' });
+        el.click();
+        return { ok: true, tag: el.tagName.toLowerCase(), text: (el.textContent || '').trim().slice(0, 60) };
+      })()`, true);
+      await new Promise((r) => setTimeout(r, 250));
+      syncBrowserNav();
+      return res;
+    }
+    if (action === "type") {
+      const sel = JSON.stringify(String(cmd.selector || ""));
+      const txt = JSON.stringify(String(cmd.text || ""));
+      const res = await wc.executeJavaScript(`(() => {
+        const el = document.querySelector(${sel});
+        if (!el) return { ok: false, error: 'Element not found: ' + ${sel} };
+        el.focus();
+        if ('value' in el) {
+          el.value = ${txt};
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return { ok: true, tag: el.tagName.toLowerCase() };
+      })()`, true);
+      return res;
+    }
+    if (action === "scroll") {
+      const y = Number(cmd.y ?? 0);
+      const res = await wc.executeJavaScript(`(() => {
+        window.scrollTo({ top: ${Number.isFinite(y) ? y : 0}, behavior: 'instant' });
+        return { ok: true, scrollY: window.scrollY, maxScroll: document.documentElement.scrollHeight - window.innerHeight };
+      })()`, true);
+      return res;
+    }
+    return { ok: false, error: `Unknown browser action: ${action}` };
+  } finally {
+    if (fromAgent) {
+      browserState.agentActive = false;
+      emitBrowserState();
+    }
+  }
+}
 
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on("second-instance", () => show());
@@ -88,6 +377,12 @@ async function startServer() {
         .catch(() => server && server.send({ type: "syph:picked", reqId: m.reqId, path: null }));
       return;
     }
+    if (m && m.type === "syph:browser:req" && typeof m.reqId === "string") {
+      handleBrowserCommand(m.cmd, m.fromAgent !== false)
+        .then((data) => server && server.send({ type: "syph:browser:res", reqId: m.reqId, ok: data?.ok !== false, data, error: data?.error }))
+        .catch((err) => server && server.send({ type: "syph:browser:res", reqId: m.reqId, ok: false, error: String(err && err.message ? err.message : err) }));
+      return;
+    }
     if (!m || typeof m.path !== "string" || !path.isAbsolute(m.path)) return;
     if (m.type === "syph:open") shell.openPath(m.path).then((err) => err && dialog.showErrorBox("Couldn't open the file", `${err}\n\n${m.path}`));
     if (m.type === "syph:reveal") shell.showItemInFolder(m.path);
@@ -114,6 +409,29 @@ ipcMain.on("syph:titlebar", (e, colors) => {
   if (!colors || !isColor(colors.color) || !isColor(colors.symbolColor)) return;
   win.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor, height: TITLEBAR_HEIGHT });
   win.setBackgroundColor(colors.color);
+});
+
+ipcMain.handle("syph:browser:cmd", (e, cmd) => {
+  if (!win || e.sender !== win.webContents) return { ok: false, error: "unauthorized" };
+  return handleBrowserCommand(cmd, false);
+});
+
+ipcMain.on("syph:browser:bounds", (e, b) => {
+  if (!win || e.sender !== win.webContents || !b) return;
+  browserBounds = {
+    x: Math.max(0, Math.round(Number(b.x) || 0)),
+    y: Math.max(0, Math.round(Number(b.y) || 0)),
+    width: Math.max(0, Math.round(Number(b.width) || 0)),
+    height: Math.max(0, Math.round(Number(b.height) || 0)),
+  };
+  browserVisible = browserBounds.width > 20 && browserBounds.height > 20;
+  applyBrowserBounds();
+});
+
+ipcMain.on("syph:browser:visible", (e, visible) => {
+  if (!win || e.sender !== win.webContents) return;
+  browserVisible = !!visible;
+  applyBrowserBounds();
 });
 
 function createWindow() {

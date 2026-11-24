@@ -150,12 +150,18 @@ export interface SyphConfig {
   defaults: {
     chatModel: string;
     taskModel: string;
+    /** Dedicated model for frontend / website / UI worker threads (e.g. "gemini:gemini-4-neon"). */
+    frontendModel?: string;
     reflectorModel: string;
     judgeModel: string;
     /** How hard reasoning models think in chats and tasks. Unset or "auto" leaves it to the provider. */
     effort?: Effort;
   };
-  budgets: { dailyUsd: { chat: number; tasks: number; evolve: number } };
+  budgets: {
+    dailyUsd: { chat: number; tasks: number; evolve: number };
+    /** Monthly Google AI Pro / AI Studio promotional credit allowance tracked for Gemini (USD). Default $10. */
+    geminiMonthlyCreditUsd?: number;
+  };
   approval: {
     autoAccept: { memory: boolean; skill: boolean };
     /** YOLO: run every ask-first tool (shell, tasks, MCP) in chats without asking. */

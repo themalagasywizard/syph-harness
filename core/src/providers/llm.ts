@@ -4,7 +4,8 @@ import type { Home } from "../home.ts";
 import type { ChatMessage, ToolCall } from "../types.ts";
 import { readJson, today, writeJson } from "../util.ts";
 import { asCreditsError, httpTransport, type CompletionRequest, type CompletionResult, type Transport } from "./client.ts";
-import { getProfile, resolveModel } from "./models.ts";
+import { geminiPricing, getProfile, resolveModel } from "./models.ts";
+import { recordGeminiUsage } from "./usage.ts";
 
 export type BudgetCategory = "chat" | "tasks" | "evolve";
 
@@ -117,10 +118,17 @@ export async function complete(home: Home, call: LlmCall): Promise<LlmResult> {
   let { content, toolCalls } = res;
   if (call.tools?.length && !native) ({ content, toolCalls } = parseTextToolCalls(content));
 
+  const cached = res.cachedTokens ?? 0;
+  const uncachedPrompt = Math.max(0, res.promptTokens - cached);
+  const cacheMult = resolved.provider === "gemini" ? geminiPricing(resolved.model).cacheMultiplier : 0.25;
+  const cachedRate = (profile.costPerMTokIn ?? 0) * cacheMult;
   const costUsd =
     res.costUsd ??
-    ((res.promptTokens * (profile.costPerMTokIn ?? 0) + res.completionTokens * (profile.costPerMTokOut ?? 0)) / 1e6);
+    ((uncachedPrompt * (profile.costPerMTokIn ?? 0) + cached * cachedRate + res.completionTokens * (profile.costPerMTokOut ?? 0)) / 1e6);
   addSpend(home, cat, costUsd);
+  if (resolved.provider === "gemini") {
+    recordGeminiUsage(home, { costUsd, promptTokens: res.promptTokens, completionTokens: res.completionTokens });
+  }
   return { ...res, content, toolCalls, costUsd, model: resolved.ref };
 }
 

@@ -12,8 +12,8 @@ export interface SettingsSection {
 }
 
 export const SETTINGS_SECTIONS: SettingsSection[] = [
-  { id: "providers", group: "Models", title: "Model providers", items: ["OpenRouter key", "MiniMax key", "Ollama base URL", "OpenAI-compatible base URL"], keywords: "api key minimax m3.1 flash subscription coding plan lm studio llama local endpoint" },
-  { id: "defaults", group: "Models", title: "Default models", items: ["Chat model", "Tasks model", "Reflector model", "Judge model"], keywords: "default model" },
+  { id: "providers", group: "Models", title: "Model providers", items: ["OpenRouter key", "MiniMax key", "Google Gemini key", "Ollama base URL", "OpenAI-compatible base URL"], keywords: "api key minimax gemini google ai studio credit balance m3.1 flash subscription coding plan lm studio llama local endpoint" },
+  { id: "defaults", group: "Models", title: "Default models", items: ["Chat model", "Frontend threads model", "Tasks model", "Reflector model", "Judge model"], keywords: "default model frontend routing gemini" },
   { id: "profile", group: "Models", title: "Model profile", items: ["Strategy", "Escalate to", "Few-shot examples", "Context window", "Native tool calling"], keywords: "cascade tokens tools" },
   { id: "approvals", group: "Running", title: "Tool approvals", items: ["YOLO mode", "YOLO for scheduled Tasks"], keywords: "permissions ask first powershell shell" },
   { id: "long", group: "Running", title: "Long tasks", items: ["Steps for a quick request", "Spend for a quick request", "Minutes for a quick request", "Steps for a long task", "Minutes for a long task", "Spend for a long task", "Review a run after failed calls", "Git checkpoints", "Load app tools on demand", "Commands scheduled Tasks may run", "Always-allowed commands"], keywords: "limits cap timeout" },

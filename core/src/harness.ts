@@ -24,6 +24,9 @@ import { Scheduler } from "./scheduler.ts";
 import { getStrategy } from "./strategies/index.ts";
 import * as store from "./store.ts";
 import { builtinTools } from "./tools/builtin.ts";
+import { generateImageTool } from "./tools/image.ts";
+import { browserTools } from "./tools/browser.ts";
+import { BrowserBridge, type BrowserState } from "./browser.ts";
 import { ToolRegistry } from "./tools/registry.ts";
 import type { Tool, ToolContext } from "./tools/types.ts";
 import { Trace, addRating, listRuns } from "./trace.ts";
@@ -91,7 +94,7 @@ export interface Job {
   endedAt?: string;
 }
 
-type Listener = (e: { type: "job"; job: Job } | { type: "task"; task: Task } | { type: "proposal"; id: string } | { type: "chats" } | { type: "terminal"; chatId?: string; entry: TerminalEntry } | { type: "threads"; coordinatorId?: string } | { type: "connectors" } | { type: "ui" }) => void;
+type Listener = (e: { type: "job"; job: Job } | { type: "task"; task: Task } | { type: "proposal"; id: string } | { type: "chats" } | { type: "terminal"; chatId?: string; entry: TerminalEntry } | { type: "threads"; coordinatorId?: string } | { type: "connectors" } | { type: "ui" } | { type: "browser"; state: BrowserState }) => void;
 
 interface LiveRun {
   ac: AbortController;
@@ -102,7 +105,7 @@ interface LiveRun {
 }
 
 /** Tools that never write files, so there is nothing to look for after them. */
-const READ_ONLY_TOOLS = new Set(["command_output", "stop_command", "list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_skills", "propose_skill_changes", "list_connectors", "list_ui", "propose_ui_change", "propose_skill", "propose_memory", "create_task", "create_connector", "update_plan", "list_repos", "github_repos", "github_api", "github_pr_create"]);
+const READ_ONLY_TOOLS = new Set(["command_output", "stop_command", "list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_skills", "propose_skill_changes", "list_connectors", "list_ui", "propose_ui_change", "propose_skill", "propose_memory", "create_task", "create_connector", "update_plan", "list_repos", "github_repos", "github_api", "github_pr_create", "browser_open", "browser_inspect", "browser_interact", "browser_close"]);
 /** What the agent may use while it drafts a contract in long-task mode: look around, write nothing. */
 const DRAFT_TOOLS = ["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_skills", "list_repos", "github_repos", "list_connectors", "set_contract", "ask_user", "update_plan", "note_progress"];
 const THREAD_PROMPT = `# You are working in a thread
@@ -132,6 +135,8 @@ export class Harness {
   readonly threads: Threads;
   /** Terminal commands the agent runs, with each chat's command log. */
   readonly terminal: Terminal;
+  /** In-app browser side pane state & driver (native Electron WebContentsView or web iframe fallback). */
+  readonly browser: BrowserBridge;
   /** Chats where the user chose "Allow for this chat": their commands run without asking until Syph restarts. */
   private sessionAllowed = new Set<string>();
 
@@ -140,6 +145,8 @@ export class Harness {
     this.connectors = new Connectors(this.home, [googleWorkspace, github]);
     this.terminal = new Terminal(this.home);
     this.terminal.onChange((entry) => this.broadcast({ type: "terminal", chatId: entry.chatId, entry }));
+    this.browser = new BrowserBridge();
+    this.browser.onChange((state) => this.broadcast({ type: "browser", state }));
     this.threads = new Threads({
       home: this.home,
       isLive: (cid) => this.live.has(cid),
@@ -200,7 +207,7 @@ export class Harness {
     // GitHub stays loaded: the repo prompt tells the agent to use its tools directly.
     const lazy = this.home.config().agent.lazyTools ? appTools.map((t) => t.name).filter((n) => !n.startsWith("github_")) : [];
     const reg: ToolRegistry = new ToolRegistry(
-      [...builtinTools, updatePlanTool, ...longTaskTools, ...(lazy.length ? [findToolsTool((ctx) => reg.hidden(ctx))] : []), ...this.extTools, ...connectorAgentTools(this.connectors, () => this.broadcast({ type: "connectors" })), ...repoTools(this.repoHost), ...uiAgentTools(this.home, () => this.uiEnv()), ...appTools],
+      [...builtinTools, generateImageTool, ...browserTools, updatePlanTool, ...longTaskTools, ...(lazy.length ? [findToolsTool((ctx) => reg.hidden(ctx))] : []), ...this.extTools, ...connectorAgentTools(this.connectors, () => this.broadcast({ type: "connectors" })), ...repoTools(this.repoHost), ...uiAgentTools(this.home, () => this.uiEnv()), ...appTools],
       this.home.config().toolPermissions ?? {},
       lazy,
     );
@@ -616,6 +623,7 @@ export class Harness {
       hooks: {
         plan: opts.onPlan,
         terminal: opts.onTerminal,
+        browser: this.browser,
         loadTools: (names) => names.forEach((n) => ctxRef.loadedTools?.add(n)),
         contract: key
           ? {
@@ -741,7 +749,7 @@ export class Harness {
       const found = changedFiles(workspace, snap, next);
       snap = next;
       // Files written in a linked folder (outside the workspace) are found from the call itself.
-      if (e.ok && (e.name === "write_file" || e.name === "edit_file")) {
+      if (e.ok && (e.name === "write_file" || e.name === "edit_file" || e.name === "generate_image")) {
         const call = turn.toolCalls!.find((c) => c.id === e.id);
         const p = String((call?.args as { path?: string } | undefined)?.path ?? "");
         const abs = p && isAbsolute(p) ? resolve(p) : "";
@@ -791,7 +799,12 @@ export class Harness {
         updateProgress(this.home, key, (p) => void (p.contract = { goal: text.slice(0, 300), scope: [], never: [], doneWhen: [], draft: true, updatedAt: now() }));
       }
       const drafting = !!readProgress(this.home, key).contract?.draft;
-      const system = buildSystemPrompt(this.home, { model, projectId: chat.projectId, query: text, connectors: await this.appPrompt(chat.projectId, chat), extra: [coordinator ? COORDINATOR_PROMPT : "", chat.role === "thread" ? THREAD_PROMPT : "", progressPrompt(readProgress(this.home, key)), drafting ? DRAFT_PROMPT : ""].filter(Boolean).join("\n\n") });
+      const feModel = this.home.config().defaults.frontendModel?.trim();
+      const coordRoutingNote =
+        coordinator && feModel
+          ? `# Frontend thread routing (token-efficient)\n- For any website, landing page, HTML/CSS, or visual UI task, call \`start_thread(..., frontend: true)\` so Syph automatically routes that worker to \`${feModel}\` while keeping coordination and non-UI work on the fast default model.\n- In a frontend thread prompt, instruct the worker to call \`read_skill("frontend-design")\` once, generate only 3–5 studio images with \`generate_image\` if available, and write complete files cleanly in one pass per file.`
+          : "";
+      const system = buildSystemPrompt(this.home, { model, projectId: chat.projectId, query: text, connectors: await this.appPrompt(chat.projectId, chat), extra: [coordinator ? COORDINATOR_PROMPT : "", coordRoutingNote, chat.role === "thread" ? THREAD_PROMPT : "", progressPrompt(readProgress(this.home, key)), drafting ? DRAFT_PROMPT : ""].filter(Boolean).join("\n\n") });
       const repo = activeRepo(this.home, chat, chat.projectId);
       let checkpoints = Promise.resolve();
       const onPlan = (steps: PlanStep[]) => {

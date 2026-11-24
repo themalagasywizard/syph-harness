@@ -16,7 +16,8 @@ export const startThread = defineTool({
   schema: z.object({
     title: z.string().min(1).max(80),
     prompt: z.string().min(1),
-    model: z.string().optional().describe("Model ref for the thread. Leave out to use the default."),
+    model: z.string().optional().describe("Model ref for the thread. Leave out to use the default (or frontend model when frontend: true)."),
+    frontend: z.boolean().optional().describe("Set true for website, landing page, HTML/CSS, or visual UI tasks so Syph routes the thread to the configured frontend model (e.g. Gemini 4 Neon) while keeping other work on the cheap default model."),
     long: z.boolean().optional().describe("Long task: the thread drafts a contract for the user to approve before it starts."),
   }),
   permission: "auto",

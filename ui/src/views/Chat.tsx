@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, AtSign, Plus, Settings, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, Clock, Code2, Copy, CornerDownRight, Files, Flag, FlaskConical, FolderClosed, Image as ImageIcon, Lightbulb, LayoutTemplate, ListChecks, Loader2, Moon, Paperclip, Pencil, RotateCcw, ShieldQuestion, Slash, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Wrench, X, Zap } from "lucide-react";
+import { ArrowUp, AtSign, Plus, Settings, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, Clock, Code2, Copy, CornerDownRight, Files, Flag, FlaskConical, FolderClosed, Globe, Image as ImageIcon, Lightbulb, LayoutTemplate, ListChecks, Loader2, Moon, Paperclip, Pencil, RotateCcw, ShieldQuestion, Slash, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Wrench, X, Zap } from "lucide-react";
 import { Markdown } from "../components/Markdown";
 import { Mark } from "../components/Logo";
 import { CellLoader } from "../components/CellLoader";
@@ -324,7 +324,7 @@ function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, sta
 }
 
 export function ChatView({ chatId, projectId: initialProject, draft: initialDraft, autoSend }: { chatId?: string; projectId?: string; draft?: string; autoSend?: boolean }) {
-  const { state, go, refresh, theme, setTheme, showFile } = useApp();
+  const { state, go, refresh, theme, setTheme, showFile, browser, toggleBrowser } = useApp();
   const [filesOpen, setFilesOpen] = useState(false);
   const [chat, setChat] = useState<Chat | null>(null);
   const [cid, setCid] = useState(chatId);
@@ -657,6 +657,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const empty = !turns.length && !live;
   const noKey = state && !state.config.hasOpenRouterKey && (model ?? "").startsWith("openrouter:");
   const noMiniMaxKey = state && !state.config.hasMiniMaxKey && (model ?? "").startsWith("minimax:");
+  const noGeminiKey = state && !state.config.hasGeminiKey && (model ?? "").startsWith("gemini:");
 
   const body = (
     <>
@@ -688,6 +689,11 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
         </div>
         )}
         <ActiveRepoChip chatId={cid} projectId={projectId} />
+        <button className={`pill ${browser.open ? "on" : ""}`} onClick={toggleBrowser} title="Toggle in-app browser (Ctrl+Shift+B)">
+          <Globe size={15} />
+          <span className="pill-label">Browser</span>
+          {browser.agentActive && <span className="bp-live-dot" />}
+        </button>
         <TerminalPill chatId={cid} live={!!live} />
         <button className={`pill yolo ${yolo ? "on" : ""}`} onClick={toggleYolo} title={yolo ? "YOLO is on: shell (PowerShell) and other ask-first tools run without asking. Click to turn off." : "Turn on YOLO: run shell (PowerShell) and other ask-first tools without asking."}>
           <Zap size={15} fill={yolo ? "currentColor" : "none"} /> <span className="yolo-text">{yolo ? "YOLO on" : "Ask first"}</span>
@@ -776,6 +782,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
         {error && <div className="banner bad">{error}</div>}
         {noKey && <div className="banner">Add your OpenRouter key in <a href="#/settings">Settings</a> to chat with {model?.replace("openrouter:", "")}.</div>}
         {noMiniMaxKey && <div className="banner">Add your MiniMax key in <a href="#/settings">Settings</a> to chat with {modelLabel(model)}.</div>}
+        {noGeminiKey && <div className="banner">Add your Google Gemini key in <a href="#/settings">Settings</a> to chat with {modelLabel(model)}.</div>}
         <div
           className={`composer ${dragging ? "dragging" : ""}`}
           onDragOver={(e) => {

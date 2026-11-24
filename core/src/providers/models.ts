@@ -43,6 +43,32 @@ export const MINIMAX_MODELS = [
 ];
 export const MINIMAX_DEFAULT = "minimax:MiniMax-M3.1-Flash";
 
+/**
+ * Curated Google AI Studio Gemini models (generativelanguage.googleapis.com/v1beta/openai).
+ * Pricing is in USD per 1M tokens (including 95% cached-input discount on Gemini 4) for the $10/month credit meter.
+ */
+export const GEMINI_MODELS = [
+  { id: "gemini-4-neon", label: "Gemini 4 Neon", contextWindow: 1_048_576, costIn: 3.0, costOut: 15.0, cacheDiscount: 0.05 },
+  { id: "gemini-4-argon", label: "Gemini 4 Argon", contextWindow: 1_048_576, costIn: 2.0, costOut: 10.0, cacheDiscount: 0.05 },
+  { id: "gemini-4-carbon", label: "Gemini 4 Carbon", contextWindow: 1_048_576, costIn: 4.0, costOut: 20.0, cacheDiscount: 0.05 },
+  { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", contextWindow: 1_048_576, costIn: 0.30, costOut: 2.50, cacheDiscount: 0.25 },
+  { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite", contextWindow: 1_048_576, costIn: 0.10, costOut: 0.40, cacheDiscount: 0.25 },
+];
+export const GEMINI_DEFAULT = "gemini:gemini-4-neon";
+
+/** USD per 1M input/output tokens and cached-input multiplier for a Gemini model ID. */
+export function geminiPricing(model: string): { costPerMTokIn: number; costPerMTokOut: number; cacheMultiplier: number } {
+  const clean = model.replace(/^models\//, "").toLowerCase();
+  const exact = GEMINI_MODELS.find((m) => m.id === clean);
+  if (exact) return { costPerMTokIn: exact.costIn, costPerMTokOut: exact.costOut, cacheMultiplier: exact.cacheDiscount };
+  if (/gemini-4.*neon/.test(clean)) return { costPerMTokIn: 3.0, costPerMTokOut: 15.0, cacheMultiplier: 0.05 };
+  if (/gemini-4.*carbon/.test(clean)) return { costPerMTokIn: 4.0, costPerMTokOut: 20.0, cacheMultiplier: 0.05 };
+  if (/gemini-4/.test(clean)) return { costPerMTokIn: 2.0, costPerMTokOut: 10.0, cacheMultiplier: 0.05 };
+  if (/flash-lite|lite/.test(clean)) return { costPerMTokIn: 0.10, costPerMTokOut: 0.40, cacheMultiplier: 0.25 };
+  if (/flash/.test(clean)) return { costPerMTokIn: 0.30, costPerMTokOut: 2.50, cacheMultiplier: 0.25 };
+  return { costPerMTokIn: 3.0, costPerMTokOut: 15.0, cacheMultiplier: 0.05 };
+}
+
 const fileFor = (ref: string) => `profiles/${ref.replace(/[^\w.-]+/g, "_")}.json`;
 
 // Context windows the providers report, by model reference. Syph uses the whole window of the model
@@ -61,18 +87,29 @@ export function getProfile(home: Home, ref: string): ModelProfile {
   const stored = readJson<Partial<ModelProfile> | null>(home.path(fileFor(ref)), null);
   const base = readJson<Partial<ModelProfile>>(home.path("profiles/default.json"), {});
   const local = /^(ollama|lmstudio):/.test(ref);
+  const isGemini = /^gemini:/.test(ref);
+  const gModel = isGemini ? ref.slice("gemini:".length) : "";
+  const gPrice = isGemini ? geminiPricing(gModel) : undefined;
   const guess: ModelProfile = {
     id: ref,
-    contextWindow: local ? 8192 : 128000,
+    contextWindow: local ? 8192 : isGemini ? 1_048_576 : 128000,
     nativeTools: true,
     strategy: local ? "verify" : "direct",
     fewShot: local ? 2 : 0,
     temperature: 0.3,
+    ...(isGemini ? { vision: true, ...gPrice } : {}),
   };
   const p = { ...guess, ...base, ...stored, id: ref } as ModelProfile;
   // The model's full window wins over a default or a stale saved number, unless the user chose a limit.
-  const known = knownContextWindow(home, ref) ?? MINIMAX_MODELS.find((m) => `minimax:${m.id}` === ref)?.contextWindow;
+  const known =
+    knownContextWindow(home, ref) ??
+    MINIMAX_MODELS.find((m) => `minimax:${m.id}` === ref)?.contextWindow ??
+    GEMINI_MODELS.find((m) => `gemini:${m.id}` === ref)?.contextWindow;
   if (known && !p.contextWindowSet) p.contextWindow = known;
+  if (isGemini && gPrice) {
+    if (p.costPerMTokIn === undefined) p.costPerMTokIn = gPrice.costPerMTokIn;
+    if (p.costPerMTokOut === undefined) p.costPerMTokOut = gPrice.costPerMTokOut;
+  }
   return p;
 }
 
@@ -143,7 +180,8 @@ export async function listModels(home: Home): Promise<ModelInfo[]> {
       try {
         const apiKey = p.apiKeyEnv ? home.env(p.apiKeyEnv) : undefined;
         const minimax = p.name === "minimax";
-        if (minimax && !apiKey) return; // nothing to offer until a key is saved
+        const gemini = p.name === "gemini";
+        if ((minimax || gemini) && !apiKey) return; // nothing to offer until a key is saved
         const res = await fetch(p.baseUrl.replace(/\/$/, "") + "/models", {
           headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
           signal: AbortSignal.timeout(4000),
@@ -154,6 +192,21 @@ export async function listModels(home: Home): Promise<ModelInfo[]> {
           const listed = new Set<string>((json.data ?? []).map((m: any) => m.id));
           for (const m of MINIMAX_MODELS) out.push({ ref: `minimax:${m.id}`, label: m.label, provider: p.name, contextWindow: m.contextWindow, tools: true });
           for (const id of listed) if (!MINIMAX_MODELS.some((m) => m.id === id)) out.push({ ref: `minimax:${id}`, label: id, provider: p.name });
+          return;
+        }
+        if (gemini) {
+          const listed = new Set<string>(
+            (json.data ?? [])
+              .map((m: any) => String(m.id ?? "").replace(/^models\//, ""))
+              .filter((id: string) => /^gemini-/i.test(id) && !/embedding|aqa|tts|veo|imagen/i.test(id)),
+          );
+          for (const m of GEMINI_MODELS) out.push({ ref: `gemini:${m.id}`, label: m.label, provider: p.name, contextWindow: m.contextWindow, tools: true });
+          for (const id of listed) {
+            if (!GEMINI_MODELS.some((m) => m.id === id)) {
+              const label = id.replace(/^gemini-/, "Gemini ").replace(/-/g, " ").replace(/\b(\w)/g, (c) => c.toUpperCase());
+              out.push({ ref: `gemini:${id}`, label, provider: p.name, contextWindow: 1_048_576, tools: true });
+            }
+          }
           return;
         }
         if (!res?.ok) return;

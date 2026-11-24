@@ -173,6 +173,7 @@ const STOP_COPY: Partial<Record<StopReason, { title: string; text: string; actio
 const BILLING: Record<string, { name: string; href: string }> = {
   openrouter: { name: "OpenRouter", href: "https://openrouter.ai/settings/credits" },
   minimax: { name: "MiniMax", href: "https://platform.minimax.io/console/plan" },
+  gemini: { name: "Google Gemini", href: "https://aistudio.google.com/usage" },
 };
 
 /** The provider account ran out of credit: say so plainly, link to top up, and offer a retry. */

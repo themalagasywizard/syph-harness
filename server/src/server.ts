@@ -36,8 +36,11 @@ import {
   snapshot,
   type AgentEvent,
   MINIMAX_DEFAULT,
+  GEMINI_DEFAULT,
   miniMaxUsage,
   openRouterUsage,
+  geminiUsage,
+  adjustGeminiUsage,
   type ProviderUsage,
 } from "@syph/core";
 
@@ -55,11 +58,46 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   };
   const home = h.home;
 
+  // Wire Electron's native WebContentsView browser over IPC when running inside Syph Desktop.
+  if (typeof process.send === "function") {
+    const pendingBrowser = new Map<string, { resolve: (v: Record<string, any>) => void; timer: ReturnType<typeof setTimeout> }>();
+    let seq = 0;
+    process.on("message", (m: any) => {
+      if (m?.type === "syph:browser:state" && m.state) {
+        h.browser.syncState(m.state);
+        return;
+      }
+      if (m?.type === "syph:browser:res" && typeof m.reqId === "string") {
+        const slot = pendingBrowser.get(m.reqId);
+        if (!slot) return;
+        clearTimeout(slot.timer);
+        pendingBrowser.delete(m.reqId);
+        if (m.ok) slot.resolve(m.data ?? { ok: true });
+        else slot.resolve({ ok: false, error: m.error ?? "Browser command failed." });
+      }
+    });
+    h.browser.setDriver(
+      {
+        exec: (cmd, fromAgent) =>
+          new Promise((resolve) => {
+            const reqId = `br_${Date.now()}_${++seq}`;
+            const timer = setTimeout(() => {
+              pendingBrowser.delete(reqId);
+              resolve({ ok: false, error: "In-app browser command timed out." });
+            }, 30_000);
+            pendingBrowser.set(reqId, { resolve, timer });
+            process.send!({ type: "syph:browser:req", reqId, cmd, fromAgent });
+          }),
+      },
+      true,
+    );
+  }
+
   // ----- State -----
   route("GET", "/api/state", () => {
     const cfg = home.config();
     return {
-      config: { ...cfg, hasOpenRouterKey: !!home.env("OPENROUTER_API_KEY"), hasMiniMaxKey: !!home.env("MINIMAX_API_KEY") },
+      config: { ...cfg, hasOpenRouterKey: !!home.env("OPENROUTER_API_KEY"), hasMiniMaxKey: !!home.env("MINIMAX_API_KEY"), hasGeminiKey: !!home.env("GEMINI_API_KEY") },
       projects: store.listProjects(home).map((p) => ({ ...p, folder: store.workspaceFor(home, p.id), chatCount: store.listChats(home).filter((c) => c.projectId === p.id && c.role === "thread").length, taskCount: store.listTasks(home).filter((t) => t.projectId === p.id).length })),
       chats: (() => {
         const live = h.liveChats();
@@ -74,9 +112,12 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
       homePath: home.root,
       workspacePath: store.workspaceFor(home),
       github: h.githubState(),
+      browser: h.browser.getState(),
     };
   });
   route("GET", "/api/models", () => h.models());
+  route("GET", "/api/browser", () => h.browser.getState());
+  route("POST", "/api/browser/cmd", (_q, _s, _p, body) => h.browser.exec(body ?? {}, false));
 
   // ----- Settings -----
   route("PUT", "/api/settings", async (_q, _s, _p, body) => {
@@ -143,13 +184,47 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
     return mmStatus();
   });
 
-  // ----- Usage: MiniMax plan windows and OpenRouter credit, cached briefly so the bar can poll -----
+  // ----- Google Gemini key (AI Studio API key funded by Google AI Pro $10/month credits) -----
+  const GM = "GEMINI_API_KEY";
+  const gmStatus = () => {
+    const k = home.env(GM);
+    return { set: !!k, source: home.envSource(GM), masked: k ? maskKey(k) : null };
+  };
+  const gmBase = () => home.config().providers.find((p) => p.name === "gemini")?.baseUrl ?? "https://generativelanguage.googleapis.com/v1beta/openai";
+  route("GET", "/api/keys/gemini", () => gmStatus());
+  route("PUT", "/api/keys/gemini", async (_q, _s, _p, body) => {
+    const key = cleanGeminiKey(String(body?.key ?? ""));
+    const check = await checkGeminiKey(key, gmBase());
+    if (check.rejected) throw httpError(400, check.error!);
+    const first = !home.env(GM);
+    home.setEnv(GM, key);
+    if (first && body?.makeFrontendDefault !== false) {
+      const d = home.config().defaults;
+      if (!d.frontendModel) home.saveConfig({ defaults: { ...d, frontendModel: GEMINI_DEFAULT } });
+    }
+    return { ...gmStatus(), check };
+  });
+  route("POST", "/api/keys/gemini/check", async () => {
+    const k = home.env(GM);
+    if (!k) throw httpError(400, "No Google Gemini key saved yet.");
+    return { ...gmStatus(), check: await checkGeminiKey(k, gmBase()) };
+  });
+  route("DELETE", "/api/keys/gemini", () => {
+    home.setEnv(GM, null);
+    return gmStatus();
+  });
+
+  // ----- Usage: MiniMax plan windows, OpenRouter credit, and Gemini monthly credit ledger -----
   const usageCache = new Map<string, Promise<ProviderUsage>>();
   const usageAt = new Map<string, number>();
   route("GET", "/api/usage/:provider", (req, _s, p) => {
     const provider = p.provider;
     const fresh = qs(req).get("fresh") === "1";
     const model = qs(req).get("model") ?? undefined;
+    if (provider === "gemini") {
+      if (!home.env(GM)) return { provider, meters: [], checkedAt: Date.now(), error: "No Google Gemini key saved." };
+      return geminiUsage(home);
+    }
     const cacheKey = `${provider}:${model ?? ""}`;
     if (!fresh && usageCache.has(cacheKey) && Date.now() - (usageAt.get(cacheKey) ?? 0) < 60_000) return usageCache.get(cacheKey)!;
     let job: Promise<ProviderUsage>;
@@ -167,6 +242,15 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
     usageAt.set(cacheKey, Date.now());
     job.catch(() => usageCache.delete(cacheKey));
     return job;
+  });
+  route("PUT", "/api/usage/gemini", (_q, _s, _p, body) => {
+    if (typeof body?.creditUsd === "number" && Number.isFinite(body.creditUsd) && body.creditUsd >= 0) {
+      home.saveConfig({ budgets: { ...home.config().budgets, geminiMonthlyCreditUsd: body.creditUsd } });
+    }
+    if (typeof body?.usedUsd === "number" && Number.isFinite(body.usedUsd) && body.usedUsd >= 0) {
+      adjustGeminiUsage(home, body.usedUsd);
+    }
+    return geminiUsage(home);
   });
 
   route("GET", "/api/profiles/:ref", (_q, _s, p) => h.profileFresh(decodeURIComponent(p.ref)));
@@ -471,7 +555,7 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
 
   const uiDir = opts.uiDir ?? UI_DIST;
   // Routes a phone may not call: managing phones, and opening things on this computer's screen.
-  const PHONE_BLOCKED = /^\/api\/(phone|files\/(open|reveal)$)/;
+  const PHONE_BLOCKED = /^\/api\/(phone|browser|files\/(open|reveal)$)/;
 
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -619,6 +703,33 @@ function serveStatic(dir: string, pathname: string, res: ServerResponse) {
   }
   res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
   res.end(readFileSync(file));
+}
+
+// ----- Google Gemini key helpers -----
+
+/** Accept a pasted Gemini key with stray quotes, spaces or a leading GEMINI_API_KEY=. */
+export function cleanGeminiKey(raw: string) {
+  const key = raw.trim().replace(/^(?:export\s+)?(?:GEMINI|GOOGLE)_API_KEY\s*=\s*/, "").replace(/^(?:Bearer\s+)/i, "").replace(/^["']|["']$/g, "").trim();
+  if (!key) throw httpError(400, "Paste your Google Gemini API key first.");
+  if (!/^[\x21-\x7e]+$/.test(key)) throw httpError(400, "That key has spaces or line breaks in it. Copy it again from aistudio.google.com/apikey.");
+  if (key.length < 20) throw httpError(400, "That looks too short for a Google Gemini API key. Copy all of it from aistudio.google.com/apikey.");
+  return key;
+}
+
+/** Check a Google AI Studio key against Gemini's OpenAI-compatible /models endpoint. */
+export async function checkGeminiKey(key: string, base = process.env.SYPH_GEMINI_URL ?? "https://generativelanguage.googleapis.com/v1beta/openai"): Promise<KeyCheck> {
+  try {
+    const res = await fetch(`${base.replace(/\/$/, "")}/models`, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000) });
+    if (res.status === 400 || res.status === 401 || res.status === 403) {
+      return { ok: false, rejected: true, error: "Google rejected this API key. Check you copied all of it from aistudio.google.com/apikey." };
+    }
+    if (!res.ok) return { ok: false, error: `Google Gemini answered ${res.status}. Try Check again later.` };
+    const d: any = await res.json().catch(() => ({}));
+    const ids: string[] = (d?.data ?? []).map((m: any) => String(m.id ?? "").replace(/^models\//, "")).filter((id: string) => /^gemini-/i.test(id));
+    return { ok: true, label: ids.length ? `${ids.length} Gemini models available` : "Gemini API ready" };
+  } catch {
+    return { ok: false, error: "Couldn't reach Google Gemini to check the key. Check your connection." };
+  }
 }
 
 // ----- MiniMax key helpers -----

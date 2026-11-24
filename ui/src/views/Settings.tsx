@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronsDownUp, ChevronsUpDown, Cloud, Cpu, Download, Plug, Server, Zap } from "lucide-react";
+import { ChevronDown, ChevronsDownUp, ChevronsUpDown, Cloud, Cpu, Download, Plug, Server, Sparkles, Zap } from "lucide-react";
 import { Toggle } from "../components/Toggle";
 import { ModelPicker } from "../components/ModelPicker";
-import { MiniMaxKey, OpenRouterKey } from "../components/OpenRouterKey";
+import { GeminiKey, MiniMaxKey, OpenRouterKey } from "../components/OpenRouterKey";
 import { UsageCard } from "../components/UsageBar";
 import { InterfaceSettings } from "../components/InterfaceSettings";
 import { PhonePairing } from "../components/PhonePairing";
@@ -12,6 +12,7 @@ import { useExt } from "../ext";
 import { SETTINGS_SECTIONS } from "../settingsIndex";
 
 const MINIMAX_DEFAULT = "minimax:MiniMax-M3.1-Flash";
+const GEMINI_DEFAULT = "gemini:gemini-4-neon";
 
 const OPEN_KEY = "syph.settingsOpen";
 function readOpen(): string[] {
@@ -47,6 +48,7 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
   const [profileRef, setProfileRef] = useState<string>();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [exported, setExported] = useState<string>();
+  const [geminiBump, setGeminiBump] = useState(0);
   const cfg = state?.config;
 
   useEffect(() => {
@@ -89,8 +91,8 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
   const provider = (name: string) => cfg.providers.find((p) => p.name === name);
 
   const summary: Record<string, string> = {
-    providers: `OpenRouter ${cfg.hasOpenRouterKey ? "key set" : "no key"} · MiniMax ${cfg.hasMiniMaxKey ? "key set" : "no key"} · Ollama · OpenAI-compatible`,
-    defaults: `Chat ${shortModel(cfg.defaults.chatModel)} · Tasks ${shortModel(cfg.defaults.taskModel)}`,
+    providers: `OpenRouter ${cfg.hasOpenRouterKey ? "key set" : "no key"} · MiniMax ${cfg.hasMiniMaxKey ? "key set" : "no key"} · Gemini ${cfg.hasGeminiKey ? "key set" : "no key"} · Local`,
+    defaults: `Chat ${shortModel(cfg.defaults.chatModel)} · Frontend ${shortModel(cfg.defaults.frontendModel || cfg.defaults.chatModel)} · Tasks ${shortModel(cfg.defaults.taskModel)}`,
     profile: profile ? `${shortModel(profileRef)} · ${profile.strategy} · ${profile.nativeTools ? "native tools" : "text tools"}` : "How Syph runs each model",
     approvals: `YOLO ${onOff(cfg.approval.yolo)} · Terminal ${cfg.approval.terminal === "auto" ? "auto" : "asks"} · YOLO for Tasks ${onOff(cfg.approval.yoloTasks)}`,
     long: `Long tasks: ${agent.longSteps ? `${agent.longSteps} steps` : "no step cap"}, ${agent.maxUsdPerLongRun ? `$${agent.maxUsdPerLongRun}` : "no spend cap"} · Checkpoints ${onOff(agent.gitCheckpoints)}`,
@@ -134,6 +136,55 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
               <span className={`conn ${cfg.hasMiniMaxKey ? "" : "off"}`}>{cfg.hasMiniMaxKey ? "● Key set" : "○ No key"}</span>
             </div>
           </div>
+          <div className="card">
+            <div className="provider">
+              <div className="pi"><Sparkles size={20} /></div>
+              <div>
+                <h3>Google Gemini</h3>
+                <p>Use your Google AI Studio key (including Google AI Pro monthly credits) for high-craft frontend worker threads and studio image generation.</p>
+                <GeminiKey onChange={() => { refresh(); setGeminiBump((b) => b + 1); }} />
+                {cfg.hasGeminiKey && (
+                  <>
+                    <UsageCard provider="gemini" bump={geminiBump} />
+                    <div className="key-row" style={{ marginTop: 10 }}>
+                      <span className="hint">Monthly credit (USD)</span>
+                      <input
+                        className="input"
+                        type="number"
+                        min={1}
+                        step={1}
+                        style={{ width: 84 }}
+                        defaultValue={cfg.budgets.geminiMonthlyCreditUsd ?? 10}
+                        onBlur={async (e) => {
+                          const v = Number(e.target.value);
+                          if (Number.isFinite(v) && v >= 0 && v !== (cfg.budgets.geminiMonthlyCreditUsd ?? 10)) {
+                            await api.put("/usage/gemini", { creditUsd: v });
+                            refresh();
+                            setGeminiBump((b) => b + 1);
+                          }
+                        }}
+                      />
+                      <button
+                        className="btn ghost sm"
+                        onClick={async () => {
+                          await api.put("/usage/gemini", { usedUsd: 0 });
+                          setGeminiBump((b) => b + 1);
+                        }}
+                      >
+                        Reset month
+                      </button>
+                      {cfg.defaults.frontendModel !== GEMINI_DEFAULT && (
+                        <button className="btn ghost sm" onClick={() => patch({ defaults: { ...cfg.defaults, frontendModel: GEMINI_DEFAULT } })}>
+                          Use for frontend threads
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+              <span className={`conn ${cfg.hasGeminiKey ? "" : "off"}`}>{cfg.hasGeminiKey ? "● Key set" : "○ No key"}</span>
+            </div>
+          </div>
           {[["ollama", "Ollama", "Local models on this machine or your network.", <Cpu size={20} />], ["lmstudio", "OpenAI-compatible", "LM Studio, llama.cpp, vLLM or any /v1 endpoint.", <Server size={20} />]].map(([name, title, desc, icon]) => (
             <div className="card" key={name as string}>
               <div className="provider">
@@ -154,10 +205,16 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
     ),
     defaults: (
 <div className="list">
-          {([["chatModel", "Chat", "New chats start with this model."], ["taskModel", "Tasks", "Scheduled tasks use this unless they pick one."], ["reflectorModel", "Reflector", "Proposes improvements. Use your strongest model."], ["judgeModel", "Judge", "Scores eval answers. Ideally a different family from the chat model."]] as const).map(([k, label, hint]) => (
+          {([
+            ["chatModel", "Chat", "New chats and project coordinators start with this model (keep fast/cheap, e.g. MiniMax)."],
+            ["frontendModel", "Frontend threads", "Coordinator automatically routes website, landing page, and UI worker threads here (e.g. Gemini 4 Neon)."],
+            ["taskModel", "Tasks", "Scheduled tasks use this unless they pick one."],
+            ["reflectorModel", "Reflector", "Proposes improvements. Use your strongest model."],
+            ["judgeModel", "Judge", "Scores eval answers. Ideally a different family from the chat model."],
+          ] as const).map(([k, label, hint]) => (
             <div key={k} className="row" style={{ gridTemplateColumns: "1fr 280px" }}>
               <div><div className="name">{label}</div><div className="sub">{hint}</div></div>
-              <ModelPicker value={cfg.defaults[k]} onChange={(m) => patch({ defaults: { ...cfg.defaults, [k]: m } })} compact={false} up={false} />
+              <ModelPicker value={cfg.defaults[k] || undefined} onChange={(m) => patch({ defaults: { ...cfg.defaults, [k]: m } })} compact={false} up={false} />
             </div>
           ))}
         </div>
@@ -214,8 +271,8 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
             <Toggle on={!!cfg.approval.yolo} onChange={(v) => patch({ approval: { yolo: v } })} label="YOLO mode" />
           </div>
           <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
-            <div style={{ minWidth: 0 }}><div className="name">Run terminal commands without asking</div><div className="sub wrap">Commands in your workspace and in folders linked with write access run straight away; you still see each one in the chat's command log and can stop it. Off: Syph asks before each command (you can also allow a whole chat from the question). Read-only folders always ask.</div></div>
-            <Toggle on={cfg.approval.terminal === "auto"} onChange={(v) => patch({ approval: { terminal: v ? "auto" : "ask" } })} label="Run terminal commands without asking" />
+            <div style={{ minWidth: 0 }}><div className="name">Run terminal commands automatically</div><div className="sub wrap">Run commands in your workspace and writable linked folders without asking each time. Read-only folders still ask.</div></div>
+            <Toggle on={cfg.approval.terminal === "auto"} onChange={(v) => patch({ approval: { terminal: v ? "auto" : "ask" } })} label="Run terminal commands automatically" />
           </div>
           <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
             <div style={{ minWidth: 0 }}><div className="name">YOLO for scheduled Tasks</div><div className="sub wrap">Tasks run with nobody watching, so they decline ask-first tools unless this is on.</div></div>
@@ -233,12 +290,12 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
             ["longMinutes", "Minutes for a long task", "0 means no cap. Runs can go for hours.", 0, 100000],
             ["maxUsdPerLongRun", "Spend for a long task (USD)", "0 means no cap. The daily chat budget below still applies: raise it for long runs.", 0, 1000],
             ["reviewAfterErrors", "Review a run after this many failed calls", "Syph works out what it was missing and proposes a fix (a tool, a skill, a rule) in Evolve. 0 turns this off.", 0, 100],
-            ["maxThreads", "Project threads at once", "How many threads the coordinators may run at the same time. More wait in a queue.", 1, 20],
-            ["coordinatorWakesPerHour", "Coordinator follow-ups per hour", "How often finished threads may wake a coordinator to report. Stops two agents from pinging each other forever. 0 turns follow-ups off.", 0, 60],
+            ["maxThreads", "Max concurrent project threads", "How many worker threads a project coordinator can run at the same time.", 1, 10],
+            ["coordinatorWakesPerHour", "Max coordinator auto-wakeups per hour", "How many times per hour the coordinator can automatically wake to follow up on finished threads.", 0, 60],
           ] as const).map(([key, name, sub, min, max]) => (
             <div className="row" style={{ gridTemplateColumns: "1fr 120px" }} key={key}>
               <div><div className="name">{name}</div><div className="sub">{sub}</div></div>
-              <input className="input" type="number" min={min} max={max} step={key === "maxUsdPerRun" || key === "maxUsdPerLongRun" ? 0.1 : 1} value={agent[key] ?? (key === "maxThreads" ? 3 : key === "coordinatorWakesPerHour" ? 6 : 0)} onChange={(e) => patch({ agent: { ...agent, [key]: Number(e.target.value) } })} />
+              <input className="input" type="number" min={min} max={max} step={key === "maxUsdPerRun" || key === "maxUsdPerLongRun" ? 0.1 : 1} value={agent[key] ?? 0} onChange={(e) => patch({ agent: { ...agent, [key]: Number(e.target.value) } })} />
             </div>
           ))}
           <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>

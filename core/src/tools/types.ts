@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { BrowserBridge } from "../browser.ts";
 import type { Home } from "../home.ts";
 import type { Contract, Proposal, TerminalEntry } from "../types.ts";
 import type { LinkedFolder } from "../folders.ts";
@@ -40,6 +41,10 @@ export interface ToolContext {
     terminal?: (e: TerminalEntry) => void;
     /** A coordinator's threads (set by Harness for coordinator chats only). */
     threads?: ThreadHooks;
+    /** In-app browser bridge (set by Harness so agents can preview & inspect pages live). */
+    browser?: BrowserBridge;
+    /** Attach a base64 data: URL image to the next model step (e.g. live browser screenshot for visual QA). */
+    attachImage?: (dataUrl: string) => void;
   };
   /** Connector and MCP tool names this chat has loaded (lazy tools). */
   loadedTools?: Set<string>;
@@ -63,7 +68,7 @@ export function defineTool<S extends z.ZodType>(t: Tool<S>): Tool<S> {
 
 /** What a coordinator can do with its threads. Each returns text for the model. */
 export interface ThreadHooks {
-  start: (t: { title: string; prompt: string; model?: string; long?: boolean }) => string;
+  start: (t: { title: string; prompt: string; model?: string; frontend?: boolean; long?: boolean }) => string;
   message: (threadId: string, text: string) => string;
   list: () => string;
   read: (threadId: string, lastTurns?: number) => string;

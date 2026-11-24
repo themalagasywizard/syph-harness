@@ -2,10 +2,10 @@
 // Shown as a small bar next to the model picker and as a card in Settings.
 import { join } from "node:path";
 import type { Home } from "../home.ts";
-import { writeJson } from "../util.ts";
+import { readJson, writeJson } from "../util.ts";
 
 export interface UsageMeter {
-  /** "5-hour window", "Weekly", "Credits", "Key limit". */
+  /** "5-hour window", "Weekly", "Credits", "Key limit", "Monthly credit". */
   label: string;
   used: number;
   total: number;
@@ -15,7 +15,7 @@ export interface UsageMeter {
 }
 
 export interface ProviderUsage {
-  provider: "minimax" | "openrouter";
+  provider: "minimax" | "openrouter" | "gemini";
   meters: UsageMeter[];
   checkedAt: number;
   /** Set when nothing could be read: the bar stays hidden and Settings shows why. */
@@ -138,4 +138,96 @@ export async function openRouterUsage(opts: { key: string; baseUrl?: string; fet
 export function tightest(meters: UsageMeter[]): UsageMeter | undefined {
   const left = (m: UsageMeter) => (m.total > 0 ? 1 - m.used / m.total : 1);
   return [...meters].sort((a, b) => left(a) - left(b))[0];
+}
+
+// ---------- Google Gemini monthly free-credit ledger (Google AI Pro $10/month) ----------
+
+export interface GeminiMonthLedger {
+  month: string; // YYYY-MM
+  usedUsd: number;
+  requests: number;
+  images: number;
+  promptTokens: number;
+  completionTokens: number;
+  updatedAt: string;
+}
+
+const monthKey = (now = Date.now()) => {
+  const d = new Date(now);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+
+export function nextMonthResetMs(now = Date.now()): number {
+  const d = new Date(now);
+  return new Date(d.getFullYear(), d.getMonth() + 1, 1, 0, 0, 0, 0).getTime();
+}
+
+const geminiLedgerPath = (home: Home, now = Date.now()) => join(home.root, "usage", `gemini-${monthKey(now)}.json`);
+
+export function readGeminiLedger(home: Home, now = Date.now()): GeminiMonthLedger {
+  const m = monthKey(now);
+  return readJson<GeminiMonthLedger>(geminiLedgerPath(home, now), {
+    month: m,
+    usedUsd: 0,
+    requests: 0,
+    images: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    updatedAt: new Date(now).toISOString(),
+  });
+}
+
+/** Add one Gemini completion or image-generation call to the current month's credit ledger. */
+export function recordGeminiUsage(
+  home: Home,
+  entry: { costUsd: number; promptTokens?: number; completionTokens?: number; images?: number },
+  now = Date.now(),
+): GeminiMonthLedger {
+  const cur = readGeminiLedger(home, now);
+  const next: GeminiMonthLedger = {
+    month: cur.month,
+    usedUsd: Math.max(0, Number((cur.usedUsd + Math.max(0, entry.costUsd)).toFixed(6))),
+    requests: cur.requests + 1,
+    images: cur.images + (entry.images ?? 0),
+    promptTokens: cur.promptTokens + (entry.promptTokens ?? 0),
+    completionTokens: cur.completionTokens + (entry.completionTokens ?? 0),
+    updatedAt: new Date(now).toISOString(),
+  };
+  writeJson(geminiLedgerPath(home, now), next);
+  return next;
+}
+
+/** Manually sync or reset the current month's tracked Gemini spend (e.g. to match Google Cloud Billing). */
+export function adjustGeminiUsage(home: Home, usedUsd: number, now = Date.now()): GeminiMonthLedger {
+  const cur = readGeminiLedger(home, now);
+  const next: GeminiMonthLedger = {
+    ...cur,
+    usedUsd: Math.max(0, Number(usedUsd.toFixed(6))),
+    updatedAt: new Date(now).toISOString(),
+  };
+  writeJson(geminiLedgerPath(home, now), next);
+  return next;
+}
+
+/** Monthly Google AI Pro credit usage meter (defaults to $10/month, resets on the 1st of next month). */
+export function geminiUsage(home: Home, opts: { creditUsd?: number; now?: number } = {}): ProviderUsage {
+  const now = opts.now ?? Date.now();
+  const total = opts.creditUsd ?? home.config().budgets.geminiMonthlyCreditUsd ?? 10;
+  const ledger = readGeminiLedger(home, now);
+  const meters: UsageMeter[] = [];
+  if (total > 0) {
+    meters.push({
+      label: "Monthly credit",
+      used: ledger.usedUsd,
+      total,
+      unit: "usd",
+      resetsAt: nextMonthResetMs(now),
+    });
+  }
+  return {
+    provider: "gemini",
+    meters,
+    checkedAt: now,
+    ...(meters.length ? {} : { error: "Set a monthly Gemini credit limit in Settings to track balance." }),
+  };
 }

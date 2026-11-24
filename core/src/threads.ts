@@ -5,6 +5,8 @@
 import type { Home } from "./home.ts";
 import { progressKey, readProgress } from "./longtask.ts";
 import { complete } from "./providers/llm.ts";
+import { parseRef } from "./providers/models.ts";
+import { geminiUsage } from "./providers/usage.ts";
 import * as store from "./store.ts";
 import type { ThreadHooks } from "./tools/types.ts";
 import type { ChatRecord, ThreadState, ThreadUpdate, Turn } from "./types.ts";
@@ -28,6 +30,45 @@ export const WAKE_TEXT = "(Syph: your threads changed; the updates are just abov
 /** How long a wake-up waits for other threads that finish at about the same time. */
 const WAKE_DELAY_MS = 1500;
 const ACTIVE: ThreadState[] = ["queued", "working", "blocked"];
+
+const FRONTEND_RE = /\b(landing\s*page|web\s*site|website|web\s*page|site\s*web|page\s*d['’]accueil|homepage|frontend|front-end|ui\s*design|redesign.*site|index\.html|styles?\.css|hero\s*section|portfolio\s*site|vitrine)\b/i;
+
+/** True when a thread title/prompt is clearly website, landing page, or visual frontend work. */
+export function isFrontendTask(title: string, prompt: string): boolean {
+  return FRONTEND_RE.test(`${title}\n${prompt.slice(0, 600)}`);
+}
+
+/**
+ * Pick the model for a new worker thread.
+ * - Explicit `model` always wins.
+ * - Frontend tasks (`frontend: true` or detected) automatically route to `defaults.frontendModel`
+ *   when configured, its provider key is present, and (for Gemini) monthly credits aren't exhausted.
+ * - Everything else stays on the coordinator's cheap default model (e.g. MiniMax) for token efficiency.
+ */
+export function resolveThreadModel(
+  home: Home,
+  coordModel: string | undefined,
+  t: { title: string; prompt: string; model?: string; frontend?: boolean },
+): { model: string | undefined; routedFrontend: boolean; fallbackReason?: string } {
+  if (t.model) return { model: t.model, routedFrontend: false };
+  const cfg = home.config();
+  const fe = cfg.defaults.frontendModel?.trim();
+  if (!fe || !(t.frontend || isFrontendTask(t.title, t.prompt))) return { model: coordModel, routedFrontend: false };
+
+  const { provider } = parseRef(fe, cfg);
+  const prov = cfg.providers.find((p) => p.name === provider);
+  if (prov?.apiKeyEnv && !home.env(prov.apiKeyEnv)) {
+    return { model: coordModel, routedFrontend: false, fallbackReason: `no ${prov.apiKeyEnv} set` };
+  }
+  if (provider === "gemini") {
+    const u = geminiUsage(home);
+    const m = u.meters[0];
+    if (m && m.total > 0 && m.used >= m.total) {
+      return { model: coordModel, routedFrontend: false, fallbackReason: "Gemini monthly credit reached" };
+    }
+  }
+  return { model: fe, routedFrontend: true };
+}
 const money = (usd: number) => (usd >= 0.01 ? `$${usd.toFixed(2)}` : usd > 0 ? "<$0.01" : "$0");
 
 /** First lines of an answer, cut to fit a card. */
@@ -97,17 +138,18 @@ export class Threads {
   // ---------- Coordinator actions ----------
 
   /** Start a thread under a coordinator, or queue it when enough are already running. */
-  start(coordinatorId: string, t: { title: string; prompt: string; model?: string; long?: boolean }): ChatRecord {
+  start(coordinatorId: string, t: { title: string; prompt: string; model?: string; frontend?: boolean; long?: boolean }): ChatRecord & { _routed?: { routedFrontend: boolean; fallbackReason?: string } } {
     const coord = store.getChat(this.home, coordinatorId);
     if (!coord || coord.role !== "coordinator") throw new Error("Only a coordinator chat can start threads.");
     const title = t.title.replace(/\s+/g, " ").trim().slice(0, 80) || "Thread";
-    const model = t.model ?? coord.model;
+    const resolved = resolveThreadModel(this.home, coord.model, t);
+    const model = resolved.model;
     const chat = store.createChat(this.home, { projectId: coord.projectId, title, model, role: "thread", parentId: coordinatorId, threadState: "queued", origin: "coordinator" });
     const start = { prompt: t.prompt, ...(model ? { model } : {}), ...(t.long ? { mode: "long" as const } : {}) };
     store.patchChat(this.home, chat.id, (c) => void (c.queuedStart = start));
     this.drain();
     this.host.changed(coordinatorId);
-    return store.getChat(this.home, chat.id) ?? chat;
+    return Object.assign(store.getChat(this.home, chat.id) ?? chat, { _routed: { routedFrontend: resolved.routedFrontend, fallbackReason: resolved.fallbackReason } });
   }
 
   /** Start queued threads while there are free slots, oldest first. */
@@ -216,7 +258,12 @@ export class Threads {
     return {
       start: (t) => {
         const chat = this.start(coordinatorId, t);
-        return `Started thread ${chat.id} "${chat.title}"${chat.threadState === "queued" ? " (queued: other threads are running; it starts when a slot frees up)" : ""}. You'll get an update when it finishes or needs the user.`;
+        const routeNote = chat._routed?.routedFrontend
+          ? ` (routed to frontend model ${chat.model})`
+          : chat._routed?.fallbackReason
+            ? ` (using default model: ${chat._routed.fallbackReason})`
+            : "";
+        return `Started thread ${chat.id} "${chat.title}"${routeNote}${chat.threadState === "queued" ? " (queued: other threads are running; it starts when a slot frees up)" : ""}. You'll get an update when it finishes or needs the user.`;
       },
       message: (tid, text) => this.message(coordinatorId, tid, text),
       list: () => this.list(coordinatorId),

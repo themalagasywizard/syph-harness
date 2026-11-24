@@ -7,10 +7,24 @@ import { EvolveView } from "./views/Evolve";
 import { SkillsView } from "./views/Skills";
 import { SettingsView } from "./views/Settings";
 import { ConnectorsView } from "./views/Connectors";
-import { api, subscribe, type AppState, type Job } from "./api";
+import { api, subscribe, type AppState, type BrowserState, type Job } from "./api";
 import { FilePanel } from "./components/FilePreview";
+import { BrowserPane } from "./components/BrowserPane";
 import { ExtPage, ExtProvider, useExt } from "./ext";
 import { TitleBar, shell } from "./components/TitleBar";
+
+const EMPTY_BROWSER: BrowserState = {
+  open: false,
+  url: "",
+  title: "",
+  loading: false,
+  canGoBack: false,
+  canGoForward: false,
+  agentActive: false,
+  consoleErrors: [],
+  devtoolsOpen: false,
+  native: !!shell?.browser,
+};
 
 export type View =
   | { kind: "chat"; chatId?: string; projectId?: string; draft?: string; send?: boolean }
@@ -34,6 +48,11 @@ interface Ctx {
   /** Open the preview panel for a file on disk. */
   showFile: (path: string | null) => void;
   shownFile: string | null;
+  /** In-app browser side pane state & controls. */
+  browser: BrowserState;
+  openBrowser: (url?: string) => void;
+  closeBrowser: () => void;
+  toggleBrowser: () => void;
 }
 
 const AppCtx = createContext<Ctx>(null!);
@@ -59,7 +78,8 @@ export default function App() {
   const [jobs, setJobs] = useState<Record<string, Job>>({});
   const [tick, setTick] = useState(0);
   const [uiTick, setUiTick] = useState(0);
-  const [shownFile, showFile] = useState<string | null>(null);
+  const [shownFile, setShownFile] = useState<string | null>(null);
+  const [browser, setBrowser] = useState<BrowserState>(EMPTY_BROWSER);
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     try {
       return (localStorage.getItem("syph.theme") as "dark" | "light") ?? "dark";
@@ -68,9 +88,43 @@ export default function App() {
     }
   });
 
+  const closeBrowser = useCallback(() => {
+    setBrowser((b) => ({ ...b, open: false }));
+    if (shell?.browser) shell.browser.close().catch(() => {});
+    else api.post("/browser/cmd", { action: "close" }).catch(() => {});
+  }, []);
+
+  const openBrowser = useCallback((url?: string) => {
+    setShownFile(null);
+    setBrowser((b) => ({ ...b, open: true, ...(url ? { url } : {}) }));
+    if (shell?.browser) shell.browser.open(url).catch(() => {});
+    else api.post("/browser/cmd", { action: "open", ...(url ? { url } : {}) }).catch(() => {});
+  }, []);
+
+  const toggleBrowser = useCallback(() => {
+    setBrowser((cur) => {
+      if (cur.open) {
+        if (shell?.browser) shell.browser.close().catch(() => {});
+        else api.post("/browser/cmd", { action: "close" }).catch(() => {});
+        return { ...cur, open: false };
+      }
+      setShownFile(null);
+      if (shell?.browser) shell.browser.open().catch(() => {});
+      else api.post("/browser/cmd", { action: "open" }).catch(() => {});
+      return { ...cur, open: true };
+    });
+  }, []);
+
+  const showFile = useCallback((p: string | null) => {
+    if (p) closeBrowser();
+    setShownFile(p);
+  }, [closeBrowser]);
+
   const refresh = useCallback(async () => {
     try {
-      setState(await api.get<AppState>("/state"));
+      const next = await api.get<AppState>("/state");
+      setState(next);
+      if (next.browser) setBrowser((cur) => ({ ...cur, ...next.browser, open: cur.open || next.browser!.open }));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -79,11 +133,30 @@ export default function App() {
 
   useEffect(() => {
     refresh();
+    shell?.browser?.getState().then((s) => s && setBrowser((cur) => ({ ...cur, ...s }))).catch(() => {});
+    const offNativeBrowser = shell?.browser?.onState((s) => {
+      setBrowser((cur) => ({ ...cur, ...s }));
+      if (s.open) setShownFile(null);
+    });
     const onHash = () => setView(readHash());
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleBrowser();
+      }
+    };
     addEventListener("hashchange", onHash);
+    addEventListener("keydown", onKey);
     const off = subscribe((e) => {
       if (e.type === "job") setJobs((j) => ({ ...j, [e.job.id]: e.job }));
-      if (e.type === "chats") refresh();
+      if (e.type === "browser" && e.state) {
+        setBrowser((cur) => ({ ...cur, ...e.state }));
+        if (e.state.open) setShownFile(null);
+      }
+      if (e.type === "chats" || e.type === "threads") {
+        setTick((t) => t + 1);
+        refresh();
+      }
       if (e.type === "connectors") {
         setTick((t) => t + 1);
         setUiTick((t) => t + 1);
@@ -96,9 +169,11 @@ export default function App() {
     });
     return () => {
       removeEventListener("hashchange", onHash);
+      removeEventListener("keydown", onKey);
+      offNativeBrowser?.();
       off();
     };
-  }, [refresh]);
+  }, [refresh, toggleBrowser]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -128,11 +203,19 @@ export default function App() {
   };
 
   return (
-    <AppCtx.Provider value={{ state, refresh, go, jobs, theme, setTheme, tick, showFile, shownFile }}>
+    <AppCtx.Provider value={{ state, refresh, go, jobs, theme, setTheme, tick, showFile, shownFile, browser, openBrowser, closeBrowser, toggleBrowser }}>
       <ExtProvider tick={uiTick}>
       <div className={`frame ${shell ? `in-shell on-${shell.platform}` : ""}`}>
-      {shell && <TitleBar collapsed={collapsed} toggle={() => setCollapsed((c) => !c)} />}
-      <div className={`app ${shownFile ? "with-panel" : ""}`}>
+      {shell && (
+        <TitleBar
+          collapsed={collapsed}
+          toggle={() => setCollapsed((c) => !c)}
+          browserOpen={browser.open}
+          browserActive={browser.agentActive || !!browser.url}
+          toggleBrowser={toggleBrowser}
+        />
+      )}
+      <div className={`app ${shownFile ? "with-panel" : ""} ${browser.open ? "with-browser" : ""}`}>
         <Sidebar view={view} collapsed={collapsed} toggle={() => setCollapsed((c) => !c)} />
         <main className="main">
           {error && !state ? (
@@ -154,6 +237,7 @@ export default function App() {
           )}
         </main>
         {shownFile && <FilePanel path={shownFile} onClose={() => showFile(null)} />}
+        {browser.open && <BrowserPane state={browser} onState={(patch) => setBrowser((cur) => ({ ...cur, ...patch }))} onClose={closeBrowser} />}
       </div>
       </div>
       </ExtProvider>
