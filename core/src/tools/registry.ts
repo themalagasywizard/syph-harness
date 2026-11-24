@@ -75,7 +75,12 @@ export class ToolRegistry {
     const args = parsed.data;
     const perm = this.permissionOf(tool);
     if (perm === "deny") return { ok: false, result: `Error: the tool ${name} is disabled.`, args };
-    const reason = perm === "ask" ? `Syph wants to run ${name}.` : tool.needsApproval?.(args, ctx) ?? null;
+    let reason: string | null;
+    try {
+      reason = perm === "ask" ? (tool.needsApproval?.(args, ctx) ?? `Syph wants to run ${name}.`) : (tool.needsApproval?.(args, ctx) ?? null);
+    } catch (e) {
+      return { ok: false, result: `Error: ${(e as Error).message}`, args };
+    }
     if (reason && !(await ctx.approve(name, args, reason))) return { ok: false, result: "The user declined this action. Do not retry it; continue without it or ask what they prefer.", args };
     try {
       const result = truncate(String(await tool.run(args, ctx)), 40_000);

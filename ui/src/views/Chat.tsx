@@ -9,6 +9,8 @@ import { useApp } from "../App";
 import { api, followChat, modelLabel, queueMessage, sendMessage, uploadAttachment, type AgentEvent, type Attachment, type Chat, type CheckResult, type FileRef, type PlanStep, type Progress, type Proposal, type RunStatus, type ToolCallView, type Turn } from "../api";
 import { ContractCard, CreditsCard, EditDiff, QuestionCard, RecapLine, StatusLine, StopCard } from "../components/RunCards";
 import { ActiveRepoChip, RepoComposerMenu, useOutside } from "../components/Repos";
+import { FolderComposerMenu } from "../components/Folders";
+import { CommandApproval, TerminalPill } from "../components/Terminal";
 import { FileCard, FileIcon } from "../components/FilePreview";
 import { ExtIcon, Slot, type UiExtension } from "../ext";
 import { AutoTurnLine, ThreadCrumb, ThreadRail, ThreadUpdateCard, useProjectThreads } from "../components/Threads";
@@ -227,9 +229,10 @@ interface Approval {
   id: string;
   tool: string;
   args: unknown;
+  reason?: string;
 }
 
-type Answer = boolean | "always";
+type Answer = boolean | "always" | "session";
 
 function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, startedAt, status, last, settle, busy, onSend, onRetry }: { turn: Turn; chatId?: string; streaming?: boolean; approval?: Approval | null; onApprove?: (allow: Answer) => void; note?: string; startedAt?: number; status?: RunStatus; last?: boolean; settle?: boolean; busy?: boolean; onSend?: (text: string) => void; onRetry?: () => void }) {
   const elapsed = useElapsed(streaming ? startedAt : undefined);
@@ -266,7 +269,8 @@ function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, sta
         {turn.toolCalls?.filter((t) => t.name === "propose_ui_change" && t.ok).map((t) => /\((pr_\w+)\)/.exec(t.result ?? "")?.[1]).filter(Boolean).map((pid) => <UiProposalCard key={pid} id={pid!} />)}
         {!!turn.files?.length && <FileList files={turn.files} />}
         {note && <div className="note">{note}</div>}
-        {approval && (
+        {approval?.tool === "shell" && <CommandApproval args={(approval.args ?? {}) as any} reason={approval.reason} onAnswer={(a) => onApprove?.(a)} />}
+        {approval && approval.tool !== "shell" && (
           <div className="approval">
             <ShieldQuestion size={18} />
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -491,7 +495,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
       if (e.type === "checks") setLiveChecks(e.checks);
       if (e.type === "contract") setProgress((p) => ({ done: [], decisions: [], deadEnds: [], blocked: [], ...p, contract: e.contract }));
       if (e.type === "note" && e.text) setNote(e.text);
-      if (e.type === "approval_request") setApproval({ id: e.id, tool: e.tool, args: e.args });
+      if (e.type === "approval_request") setApproval({ id: e.id, tool: e.tool, args: e.args, reason: e.reason });
       if (e.type === "approval_done" || e.type === "tool_result") setApproval((a) => (a && (e.type !== "approval_done" || a.id === e.id) ? null : a));
     };
     try {
@@ -635,9 +639,9 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
 
   const answer = async (allow: Answer) => {
     if (!approval) return;
-    await api.post(`/approvals/${approval.id}`, allow === "always" ? { allow: true, always: true } : { allow });
+    await api.post(`/approvals/${approval.id}`, allow === "always" ? { allow: true, always: true } : allow === "session" ? { allow: true, session: true } : { allow });
     setApproval(null);
-    if (allow === "always") refresh();
+    if (allow === "always" || allow === "session") refresh();
   };
 
   const turns = [...(chat?.turns ?? []), ...(pendingUser ? [pendingUser] : [])];
@@ -684,6 +688,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
         </div>
         )}
         <ActiveRepoChip chatId={cid} projectId={projectId} />
+        <TerminalPill chatId={cid} live={!!live} />
         <button className={`pill yolo ${yolo ? "on" : ""}`} onClick={toggleYolo} title={yolo ? "YOLO is on: shell (PowerShell) and other ask-first tools run without asking. Click to turn off." : "Turn on YOLO: run shell (PowerShell) and other ask-first tools without asking."}>
           <Zap size={15} fill={yolo ? "currentColor" : "none"} /> <span className="yolo-text">{yolo ? "YOLO on" : "Ask first"}</span>
         </button>
@@ -843,6 +848,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             </div>
             <input ref={imageInput} type="file" accept="image/*" multiple hidden onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ""; }} />
             <input ref={fileInput} type="file" multiple hidden onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ""; }} />
+            <FolderComposerMenu chatId={cid} projectId={projectId} ensureChat={ensureChat} />
             <RepoComposerMenu chatId={cid} projectId={projectId} ensureChat={ensureChat} iconOnly />
             <Slot name="chat.composer" ctx={slotCtx} />
             <div className="spacer" />

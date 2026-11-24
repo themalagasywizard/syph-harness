@@ -1,14 +1,20 @@
 import type { z } from "zod";
 import type { Home } from "../home.ts";
-import type { Contract, Proposal } from "../types.ts";
+import type { Contract, Proposal, TerminalEntry } from "../types.ts";
+import type { LinkedFolder } from "../folders.ts";
+import type { Terminal } from "../terminal.ts";
 import type { ProposalInput } from "../evolve/proposals.ts";
 
 export type Permission = "auto" | "ask" | "deny";
 
 export interface ToolContext {
   home: Home;
-  /** Absolute folder the file tools are confined to. */
+  /** Absolute folder the file tools work in (relative paths). */
   workspace: string;
+  /** Folders on the user's computer linked to this chat, its coordinator or its project. */
+  folders?: LinkedFolder[];
+  /** Runs and logs terminal commands (set by Harness). */
+  terminal?: Terminal;
   projectId?: string;
   chatId?: string;
   runId: string;
@@ -30,6 +36,8 @@ export interface ToolContext {
     progress?: (entry: { decision?: string; deadEnd?: string; blocked?: string; done?: string }) => string;
     /** Make hidden connector or MCP tools available to this chat (set by Harness). */
     loadTools?: (names: string[]) => void;
+    /** A terminal command started or ended (for the chat's command log). */
+    terminal?: (e: TerminalEntry) => void;
     /** A coordinator's threads (set by Harness for coordinator chats only). */
     threads?: ThreadHooks;
   };

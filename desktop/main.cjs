@@ -80,6 +80,14 @@ async function startServer() {
     stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
   server.on("message", (m) => {
+    // The UI's "Link a folder": show the system folder picker and send back what was chosen.
+    if (m && m.type === "syph:pickFolder" && typeof m.reqId === "string") {
+      const opts = { title: "Link a folder to Syph", properties: ["openDirectory", "createDirectory"] };
+      (win ? dialog.showOpenDialog(win, opts) : dialog.showOpenDialog(opts))
+        .then((r) => server && server.send({ type: "syph:picked", reqId: m.reqId, path: r.canceled ? null : r.filePaths[0] || null }))
+        .catch(() => server && server.send({ type: "syph:picked", reqId: m.reqId, path: null }));
+      return;
+    }
     if (!m || typeof m.path !== "string" || !path.isAbsolute(m.path)) return;
     if (m.type === "syph:open") shell.openPath(m.path).then((err) => err && dialog.showErrorBox("Couldn't open the file", `${err}\n\n${m.path}`));
     if (m.type === "syph:reveal") shell.showItemInFolder(m.path);

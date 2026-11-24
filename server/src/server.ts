@@ -219,7 +219,7 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
     if (!c.role && body?.projectId && store.getProject(home, String(body.projectId))) store.adoptIntoProject(home, c.id, String(body.projectId));
     return { ok: true };
   });
-  route("DELETE", "/api/chats/:id", (_q, _s, p) => (h.stopChat(p.id), store.deleteChat(home, p.id), { ok: true }));
+  route("DELETE", "/api/chats/:id", (_q, _s, p) => (h.stopChat(p.id), h.terminal.runningFor(p.id).forEach((e) => h.terminal.stop(e.id)), store.deleteChat(home, p.id), { ok: true }));
   // A message starts a run on the server and returns at once. The run keeps going whatever
   // the window does; /stream follows it (replaying from the start), /stop ends it.
   route("POST", "/api/chats/:id/messages", (_q, _s, p, body) => h.startChat(p.id, String(body?.text ?? ""), { model: body?.model, attachments: Array.isArray(body?.attachments) ? body.attachments : undefined, mode: body?.mode === "long" ? "long" : undefined }));
@@ -262,7 +262,7 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   });
   route("POST", "/api/chats/:id/stop", (_q, _s, p) => ({ ok: h.stopChat(p.id) }));
   route("POST", "/api/chats/:id/rate", (_q, _s, p, body) => h.rate(p.id, body.turnId, body.rating ?? null, body.note));
-  route("POST", "/api/approvals/:id", (_q, _s, p, body) => ({ ok: body?.always ? h.allowAlways(p.id) : h.resolveApproval(p.id, !!body?.allow) }));
+  route("POST", "/api/approvals/:id", (_q, _s, p, body) => ({ ok: body?.always ? h.allowAlways(p.id) : body?.session ? h.allowSession(p.id) : h.resolveApproval(p.id, !!body?.allow) }));
   route("POST", "/api/runs/:id/eval", async (_q, _s, p, body) => h.turnIntoEval(p.id, body?.rating ?? "down", body?.expectation));
   route("GET", "/api/runs", () => h.runs().slice(-200).reverse());
   route("GET", "/api/runs/:id", (_q, _s, p) => readTrace(home, p.id));
@@ -343,7 +343,7 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
     const raw = body?.path ?? new URL(req.url ?? "/", "http://x").searchParams.get("path");
     if (!raw || typeof raw !== "string") throw httpError(400, "Which file? Send its path.");
     const abs = resolve(raw);
-    if (!canAccess(home, abs)) throw httpError(403, "Syph only opens files in its workspace, its projects, or ones it made.");
+    if (!canAccess(home, abs) && !h.inLinkedFolder(abs)) throw httpError(403, "Syph only opens files in its workspace, its projects, or ones it made.");
     if (!existsSync(abs)) throw httpError(404, `That file isn't there any more: ${abs}`);
     return abs;
   };
@@ -402,6 +402,17 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   route("POST", "/api/repos/pull", (_q, _s, _p, body) => h.pullRepo(String(body?.path ?? "")));
   route("POST", "/api/repos/push", (_q, _s, _p, body) => h.pushRepo(String(body?.path ?? "")));
   route("PUT", "/api/chats/:id/active-repo", (_q, _s, p, body) => h.setActiveRepo(p.id, body?.path ? String(body.path) : null));
+
+  // ----- Folders on this computer linked to chats and projects, and the terminal -----
+  route("GET", "/api/folders", (req) => h.folders(target(qs(req))));
+  route("POST", "/api/folders/link", (_q, _s, _p, body) => h.linkFolder({ path: String(body?.path ?? ""), access: body?.access === "read" ? "read" : "write", name: typeof body?.name === "string" ? body.name : undefined, ...target(body) }));
+  route("POST", "/api/folders/unlink", (_q, _s, _p, body) => h.unlinkFolder(target(body), String(body?.path ?? "")));
+  route("POST", "/api/folders/access", (_q, _s, _p, body) => h.setFolderAccess(target(body), String(body?.path ?? ""), body?.access === "read" ? "read" : "write"));
+  // The desktop app shows the system's folder picker; elsewhere the UI asks for a typed path.
+  route("POST", "/api/folders/pick", () => pickFolder());
+  route("GET", "/api/chats/:id/terminal", (_q, _s, p) => h.terminalState(p.id));
+  route("DELETE", "/api/chats/:id/terminal/session", (_q, _s, p) => h.endTerminalSession(p.id));
+  route("POST", "/api/terminal/:id/stop", (_q, _s, p) => h.stopCommand(p.id));
 
   // ----- Interface changes Syph made -----
   const uiState = () => ({ safeMode: !!home.config().ui?.safeMode, items: listUi(home), icons: UI_ICONS, slots: UI_SLOTS });
@@ -518,6 +529,23 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
  * Open a file in its app, or show it in its folder. Inside Syph.exe the desktop shell does it
  * (it uses the system's own calls); from `npm start` the server asks the OS directly.
  */
+/** Ask the desktop shell for the system folder picker. Resolves { path: null } when cancelled. */
+function pickFolder(): Promise<{ supported: boolean; path: string | null }> {
+  if (typeof process.send !== "function") return Promise.resolve({ supported: false, path: null });
+  const reqId = Math.random().toString(36).slice(2);
+  return new Promise((res) => {
+    const on = (m: any) => {
+      if (!m || m.type !== "syph:picked" || m.reqId !== reqId) return;
+      process.off("message", on);
+      clearTimeout(timer);
+      res({ supported: true, path: typeof m.path === "string" && m.path ? m.path : null });
+    };
+    const timer = setTimeout(() => (process.off("message", on), res({ supported: true, path: null })), 10 * 60_000);
+    process.on("message", on);
+    process.send!({ type: "syph:pickFolder", reqId });
+  });
+}
+
 function desktop(action: "open" | "reveal", abs: string) {
   if (typeof process.send === "function") {
     process.send({ type: "syph:" + action, path: abs });

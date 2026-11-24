@@ -49,8 +49,36 @@ export type AgentEvent =
   | { type: "steer"; text: string }
   | { type: "contract"; contract: Contract }
   | { type: "checks"; checks: CheckResult[] }
+  | { type: "terminal"; entry: TerminalEntry }
   | { type: "error"; error: string }
   | { type: "run_end"; runId: string; content: string; usage: Usage; status: "ok" | "error" | "cancelled"; stopReason?: StopReason; recap?: Recap; question?: { question: string; options: string[] } };
+
+/** A terminal command the agent ran, for the chat's command log. */
+export interface TerminalEntry {
+  id: string;
+  chatId?: string;
+  runId?: string;
+  command: string;
+  cwd: string;
+  shell: "powershell" | "cmd" | "sh";
+  background?: boolean;
+  status: "running" | "done" | "failed" | "stopped" | "timeout";
+  exitCode?: number | string;
+  startedAt: string;
+  endedAt?: string;
+  /** The last part of stdout and stderr together, as it came. */
+  output: string;
+}
+
+/** A folder on the user's computer linked to a chat or project. */
+export interface FolderLink {
+  /** Absolute path. */
+  path: string;
+  name: string;
+  /** "read": the model may only read it. "write": read, change, and run commands in it. */
+  access: "read" | "write";
+  linkedAt: string;
+}
 
 /** What "done" means for a task, written before the work starts. */
 export interface Contract {
@@ -138,6 +166,8 @@ export interface SyphConfig {
     allowCommands?: string[];
     /** Command prefixes scheduled Tasks may run without asking, e.g. "npm test". */
     taskCommands?: string[];
+    /** Terminal commands in chats. "ask": each one asks (default). "auto": commands in linked folders with write access and the workspace run without asking. */
+    terminal?: "ask" | "auto";
   };
   evolve: { samplesPerCase: number; maxAttempts: number; heldOutFraction: number };
   killSwitch: boolean;
@@ -187,6 +217,8 @@ export interface Project {
   updatedAt: string;
   /** Git repositories connected to (cloned into) this project. */
   repos?: RepoLink[];
+  /** Folders on the user's computer every chat and thread in the project can use. */
+  folders?: FolderLink[];
   /** The project's coordinator chat: it starts, follows and reports on the project's threads. */
   coordinatorChatId?: string;
   /** Let the coordinator wake up and react when a thread finishes (default on). */
@@ -226,6 +258,8 @@ export interface ChatRecord {
   model?: string;
   /** Repositories linked to this chat only (a chat also works on its project's repos). */
   repos?: RepoLink[];
+  /** Folders on the user's computer linked to this chat only (for a coordinator, its threads use them too). */
+  folders?: FolderLink[];
   /** Folder of the repo this chat is working on now (defaults to the last one linked). */
   activeRepo?: string;
   createdAt: string;
