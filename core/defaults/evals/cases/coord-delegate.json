@@ -1,0 +1,11 @@
+{
+  "id": "coord-delegate",
+  "input": "Write a Python script that renames every photo in my photos/ folder to its date taken, and add tests for it.",
+  "coordinator": true,
+  "checks": [
+    { "type": "tool_called", "name": "start_thread" },
+    { "type": "max_words", "value": 80 }
+  ],
+  "createdAt": "2026-11-24T00:00:00.000Z",
+  "tags": ["coordinator"]
+}

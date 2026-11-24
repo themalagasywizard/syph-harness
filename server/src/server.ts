@@ -60,7 +60,7 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
     const cfg = home.config();
     return {
       config: { ...cfg, hasOpenRouterKey: !!home.env("OPENROUTER_API_KEY"), hasMiniMaxKey: !!home.env("MINIMAX_API_KEY") },
-      projects: store.listProjects(home).map((p) => ({ ...p, folder: store.workspaceFor(home, p.id), chatCount: store.listChats(home).filter((c) => c.projectId === p.id).length, taskCount: store.listTasks(home).filter((t) => t.projectId === p.id).length })),
+      projects: store.listProjects(home).map((p) => ({ ...p, folder: store.workspaceFor(home, p.id), chatCount: store.listChats(home).filter((c) => c.projectId === p.id && !c.role).length, taskCount: store.listTasks(home).filter((t) => t.projectId === p.id).length })),
       chats: (() => {
         const live = h.liveChats();
         return store.listChats(home).map((c) => (live[c.id] ? { ...c, status: live[c.id] } : c));
@@ -176,10 +176,30 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   route("GET", "/api/projects/:id", (_q, _s, p) => {
     const proj = store.getProject(home, p.id);
     if (!proj) throw httpError(404, "No such project");
-    return { ...proj, folder: store.workspaceFor(home, p.id), instructions: home.read(`projects/${p.id}/instructions.md`) ?? "", files: [...snapshot(store.workspaceFor(home, p.id), 3000).keys()].map((f) => relative(store.workspaceFor(home, p.id), f).split(sep).join("/")).sort(), chats: store.listChats(home).filter((c) => c.projectId === p.id), tasks: store.listTasks(home).filter((t) => t.projectId === p.id) };
+    return { ...proj, folder: store.workspaceFor(home, p.id), instructions: home.read(`projects/${p.id}/instructions.md`) ?? "", files: [...snapshot(store.workspaceFor(home, p.id), 3000).keys()].map((f) => relative(store.workspaceFor(home, p.id), f).split(sep).join("/")).sort(), chats: store.listChats(home).filter((c) => c.projectId === p.id && !c.role), tasks: store.listTasks(home).filter((t) => t.projectId === p.id), spend: store.projectSpend(home, p.id) };
   });
+  // ----- Coordinator and threads -----
+  const threadsOf = (pid: string) => {
+    if (!store.getProject(home, pid)) throw httpError(404, "No such project");
+    const coord = store.getOrCreateCoordinator(home, pid);
+    const live = h.liveChats();
+    return { coordinatorId: coord.id, coordinatorStatus: live[coord.id], threads: store.listThreads(home, coord.id).map((t) => (live[t.id] ? { ...t, status: live[t.id] } : t)) };
+  };
+  route("GET", "/api/projects/:id/coordinator", (_q, _s, p) => {
+    if (!store.getProject(home, p.id)) throw httpError(404, "No such project");
+    const { history: _h, pendingNotes: _n, wakes: _w, ...rest } = store.getOrCreateCoordinator(home, p.id);
+    return rest;
+  });
+  route("GET", "/api/projects/:id/threads", (_q, _s, p) => threadsOf(p.id));
+  const parentOf = (tid: string) => {
+    const t = store.getChat(home, tid);
+    if (!t?.parentId) throw httpError(404, "No such thread");
+    return t.parentId;
+  };
+  route("POST", "/api/threads/:id/resolve", (_q, _s, p, body) => ({ ok: true, message: h.threads.resolve(parentOf(p.id), p.id, body?.resolved !== false) }));
+  route("POST", "/api/threads/:id/stop", (_q, _s, p) => ({ ok: true, message: h.threads.stop(parentOf(p.id), p.id) }));
   route("POST", "/api/projects", (_q, _s, _p, body) => store.createProject(home, body));
-  route("PUT", "/api/projects/:id", (_q, _s, p, body) => store.updateProject(home, p.id, body));
+  route("PUT", "/api/projects/:id", (_q, _s, p, body) => store.updateProject(home, p.id, pick(body ?? {}, ["name", "description", "instructions", "color", "coordinatorWake"]) as any));
   route("DELETE", "/api/projects/:id", (_q, _s, p) => (store.deleteProject(home, p.id), { ok: true }));
 
   // ----- Chats -----
@@ -247,8 +267,8 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
 
   // ----- Tasks -----
   route("GET", "/api/tasks", () => store.listTasks(home).map((t) => ({ ...t, nextRun: t.enabled ? nextRunOf(t) : null, scheduleText: describeCron(t.schedule) })));
-  route("POST", "/api/tasks", (_q, _s, _p, body) => store.upsertTask(home, pick(body, ["id", "name", "prompt", "schedule", "projectId", "model", "enabled"]) as any));
-  route("PATCH", "/api/tasks/:id", (_q, _s, p, body) => store.patchTask(home, p.id, pick(body, ["name", "prompt", "schedule", "projectId", "model", "enabled"])));
+  route("POST", "/api/tasks", (_q, _s, _p, body) => store.upsertTask(home, pick(body, ["id", "name", "prompt", "schedule", "projectId", "model", "enabled", "viaCoordinator"]) as any));
+  route("PATCH", "/api/tasks/:id", (_q, _s, p, body) => store.patchTask(home, p.id, pick(body, ["name", "prompt", "schedule", "projectId", "model", "enabled", "viaCoordinator"])));
   route("DELETE", "/api/tasks/:id", (_q, _s, p) => (store.deleteTask(home, p.id), { ok: true }));
   route("POST", "/api/tasks/:id/run", (_q, _s, p) => {
     h.runTask(p.id).catch(() => {});

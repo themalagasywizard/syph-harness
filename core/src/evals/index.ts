@@ -16,6 +16,7 @@ import type { Contract } from "../types.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { Tool, ToolContext } from "../tools/types.ts";
 import { loadExtensions } from "../extensions.ts";
+import { COORDINATOR_PROMPT, THREAD_TOOL_NAMES, threadTools } from "../tools/threads.ts";
 import type { Check, EvalCase, EvalRunSummary, Proposal } from "../types.ts";
 import { extractJson, hash, id, mean, now, readJson, writeJson } from "../util.ts";
 import { Trace, readTrace, listRuns } from "../trace.ts";
@@ -64,6 +65,18 @@ export async function runCaseOnce(home: Home, model: string, c: EvalCase, extraT
   let contract: Contract | undefined;
   ctx.hooks.contract = { get: () => contract, set: (c) => void (contract = c) };
   ctx.hooks.progress = () => "Saved to progress.";
+  // Coordinator cases: the thread tools answer from memory, so nothing really starts.
+  if (c.coordinator) {
+    const started: string[] = [];
+    ctx.hooks.threads = {
+      start: (t) => (started.push(t.title), `Started thread th_${started.length} "${t.title}". You'll get an update when it finishes.`),
+      message: (tid) => `Sent to ${tid}.`,
+      list: () => (started.length ? started.map((t, i) => `- th_${i + 1} "${t}": working`).join("\n") : "No threads yet."),
+      read: (tid) => `${tid}: still working, no answer yet.`,
+      stop: (tid) => `Stopped ${tid}.`,
+      resolve: (tid) => `Resolved ${tid}.`,
+    };
+  }
   const profile = getProfile(home, model);
   try {
     const result = await getStrategy(profile.strategy).run({
@@ -71,10 +84,10 @@ export async function runCaseOnce(home: Home, model: string, c: EvalCase, extraT
       model,
       request: c.input,
       messages: [
-        { role: "system", content: buildSystemPrompt(home, { model, query: c.input, extra: `${planPrompt}\n\n${longTaskPrompt}` }) },
+        { role: "system", content: buildSystemPrompt(home, { model, query: c.input, extra: [planPrompt, longTaskPrompt, c.coordinator ? COORDINATOR_PROMPT : ""].filter(Boolean).join("\n\n") }) },
         { role: "user", content: c.input },
       ],
-      tools: new ToolRegistry([...builtinTools, updatePlanTool, ...longTaskTools, ...extraTools]).pick([...EVAL_TOOLS, ...extraTools.filter((t) => t.permission === "auto").map((t) => t.name)]),
+      tools: new ToolRegistry([...builtinTools, updatePlanTool, ...longTaskTools, ...(c.coordinator ? threadTools : []), ...extraTools]).pick([...EVAL_TOOLS, ...(c.coordinator ? THREAD_TOOL_NAMES : []), ...extraTools.filter((t) => t.permission === "auto").map((t) => t.name)]),
       ctx,
       category: "evolve",
       maxSteps: 8,
@@ -123,6 +136,10 @@ export async function scoreCheck(home: Home, check: Check, c: EvalCase, out: Cas
     case "tool_called": {
       const ok = out.toolsCalled.includes(check.name);
       return { score: ok ? 1 : 0, note: ok ? "" : `did not call ${check.name}` };
+    }
+    case "tool_not_called": {
+      const ok = !out.toolsCalled.includes(check.name);
+      return { score: ok ? 1 : 0, note: ok ? "" : `called ${check.name}` };
     }
     case "max_words": {
       const n = words(a);
