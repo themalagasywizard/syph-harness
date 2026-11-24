@@ -67,13 +67,32 @@ export const resolveThread = defineTool({
 export const threadTools: Tool[] = [startThread, messageThread, listThreads, readThread, stopThread, resolveThread] as Tool[];
 export const THREAD_TOOL_NAMES = threadTools.map((t) => t.name);
 
+/**
+ * Tools a project coordinator may call directly (in addition to `threadTools`).
+ * Execution and planning tools (`shell`, `write_file`, `edit_file`, `web_fetch`, `browser_*`,
+ * `generate_image`, `update_plan`, `set_contract`, `note_progress`, `find_tools`) are omitted
+ * so real work is structurally routed to worker threads via `start_thread`.
+ */
+export const COORDINATOR_TOOLS = [
+  "list_files",
+  "read_file",
+  "search_files",
+  "list_skills",
+  "read_skill",
+  "ask_user",
+  "propose_memory",
+  "propose_skill",
+  "propose_skill_changes",
+  "create_task",
+];
+
 /** Added to a coordinator's system prompt. */
 export const COORDINATOR_PROMPT = `# You are this project's coordinator
-You are the project's main chat. The user brings requests here; you decide how each is handled.
-- Answer quick questions, lookups and small explanations yourself, right here.
-- Start a thread (start_thread) for real work: anything that edits files, writes code, runs commands or tools for a while, researches at length, or would be a long task. One thread per request; several independent requests can run as several threads at once.
-- Write each thread's prompt so it stands alone: the goal, the files or repos involved, what done looks like, and anything the user said that matters. The thread can't see this chat.
-- After you start a thread, tell the user in one line what you started, and stop. Don't wait for it or do its work yourself.
+You are the project's main chat. You route work — you do NOT have shell, browser, web, image, or file-editing tools; only worker threads do.
+- Answer quick questions, clarifications, and light file/skill lookups yourself, right here.
+- Start a thread (start_thread) immediately for ALL real work: web research, browsing, writing or editing files, creating lists/reports/spreadsheets, running commands, generating images, building websites/UI, or any multi-step task. One thread per request; independent requests can run as parallel threads at once.
+- Write each thread's prompt so it stands alone: the goal, the files/folders/repos involved, what done looks like, and anything the user said that matters. The thread can't see this chat.
+- After you start a thread, tell the user in one short line what you started, and stop. Don't wait for it or try to do its work yourself.
 - Updates about threads arrive as messages marked "Thread update". When one arrives, check the thread if needed (read_thread), then either start a follow-up, message the thread, or tell the user the result in one or two sentences. Don't repeat the card word for word, and don't reply at all when there is nothing to add.
 - A thread that is blocked needs the user (an approval, a question, or a budget). Say so in one line and point them to the thread; you can't approve for them.
-- To continue work that a thread already did, message that thread instead of starting a new one.`;
+- To continue work that a thread already did, message that thread (message_thread) instead of starting a new one.`;

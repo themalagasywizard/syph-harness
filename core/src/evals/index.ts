@@ -16,7 +16,7 @@ import type { Contract } from "../types.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { Tool, ToolContext } from "../tools/types.ts";
 import { loadExtensions } from "../extensions.ts";
-import { COORDINATOR_PROMPT, THREAD_TOOL_NAMES, threadTools } from "../tools/threads.ts";
+import { COORDINATOR_PROMPT, COORDINATOR_TOOLS, THREAD_TOOL_NAMES, threadTools } from "../tools/threads.ts";
 import type { Check, EvalCase, EvalRunSummary, Proposal } from "../types.ts";
 import { extractJson, hash, id, mean, now, readJson, writeJson } from "../util.ts";
 import { Trace, readTrace, listRuns } from "../trace.ts";
@@ -84,10 +84,12 @@ export async function runCaseOnce(home: Home, model: string, c: EvalCase, extraT
       model,
       request: c.input,
       messages: [
-        { role: "system", content: buildSystemPrompt(home, { model, query: c.input, extra: [planPrompt, longTaskPrompt, c.coordinator ? COORDINATOR_PROMPT : ""].filter(Boolean).join("\n\n") }) },
+        { role: "system", content: buildSystemPrompt(home, { model, query: c.input, extra: (c.coordinator ? [COORDINATOR_PROMPT] : [planPrompt, longTaskPrompt]).filter(Boolean).join("\n\n") }) },
         { role: "user", content: c.input },
       ],
-      tools: new ToolRegistry([...builtinTools, updatePlanTool, ...longTaskTools, ...(c.coordinator ? threadTools : []), ...extraTools]).pick([...EVAL_TOOLS, ...(c.coordinator ? THREAD_TOOL_NAMES : []), ...extraTools.filter((t) => t.permission === "auto").map((t) => t.name)]),
+      tools: new ToolRegistry([...builtinTools, updatePlanTool, ...longTaskTools, ...(c.coordinator ? threadTools : []), ...extraTools]).pick(
+        c.coordinator ? [...COORDINATOR_TOOLS, ...THREAD_TOOL_NAMES] : [...EVAL_TOOLS, ...extraTools.filter((t) => t.permission === "auto").map((t) => t.name)],
+      ),
       ctx,
       category: "evolve",
       maxSteps: 8,

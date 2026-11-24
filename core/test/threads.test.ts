@@ -73,8 +73,14 @@ test("the coordinator starts a thread, gets a card when it ends, and wakes to re
   assert.equal(t.threadState, "review_ready", "a thread that changed files waits for review");
   assert.ok(existsSync(join(store.workspaceFor(home, project.id), "notes.md")));
 
-  // Coordinators get the thread tools; threads never do (no threads inside threads).
+  // Coordinators get thread + lightweight read-only tools only (never shell/write/browser/plan);
+  // threads get the full execution toolset and never thread tools (no threads inside threads).
   assert.ok(coordinatorTools[0].includes("start_thread"));
+  assert.ok(coordinatorTools[0].includes("read_file"));
+  for (const heavy of ["shell", "write_file", "edit_file", "web_fetch", "browser_open", "update_plan", "generate_image"]) {
+    assert.ok(!coordinatorTools[0].includes(heavy), `coordinator must not expose ${heavy}`);
+  }
+  assert.ok(threadTools[0].includes("write_file") && threadTools[0].includes("shell") && threadTools[0].includes("update_plan"));
   assert.ok(!threadTools[0].includes("start_thread") && !threadTools[0].includes("message_thread"));
 
   const c = store.getChat(home, coord.id)!;

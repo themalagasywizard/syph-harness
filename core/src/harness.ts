@@ -39,7 +39,7 @@ import { resolve, relative, sep, isAbsolute, extname } from "node:path";
 import { mistakes, needsReview, reviewRun } from "./evolve/review.ts";
 import { attachmentsForModel, saveAttachment } from "./attachments.ts";
 import { Threads } from "./threads.ts";
-import { COORDINATOR_PROMPT, threadTools } from "./tools/threads.ts";
+import { COORDINATOR_PROMPT, COORDINATOR_TOOLS, threadTools } from "./tools/threads.ts";
 import { folderFor, folderPrompt, linkedFolders, linkFolder, setFolderAccess, unlinkFolder, within, type LinkedFolder } from "./folders.ts";
 import { Terminal, WIN } from "./terminal.ts";
 import { commandCwd } from "./tools/builtin.ts";
@@ -379,7 +379,19 @@ export class Harness {
 
   /** The system prompt section about connectors, the interface, plans and the chat's repos. */
   private async appPrompt(projectId?: string, chat?: ChatRecord | null) {
-    const parts = [connectorPrompt(this.connectors), this.lazyToolsPrompt(), uiPrompt, planPrompt, longTaskPrompt, `# Files you make\nYour workspace folder is ${store.workspaceFor(this.home, projectId)}. Save documents, decks, sheets and other deliverables inside it (for example in reports/): every file you create or change there appears in the chat with a preview, its full path and Open / Show in folder buttons. When you finish, name the file and its full path.`];
+    const ws = store.workspaceFor(this.home, projectId);
+    if (chat?.role === "coordinator") {
+      // Coordinators route work to threads: omit plan/long-task/self-execution instructions that
+      // encourage doing heavy tool loops inside the coordinator chat.
+      const parts = [
+        connectorPrompt(this.connectors),
+        `# Workspace\nThis project's workspace folder is ${ws}. Pass relevant folder or file paths in your start_thread prompts so worker threads save deliverables there.`,
+        await repoPrompt(this.home, chat, projectId),
+        folderPrompt(linkedFolders(this.home, chat, projectId), WIN ? "PowerShell (or cmd)" : "sh"),
+      ];
+      return parts.filter(Boolean).join("\n\n");
+    }
+    const parts = [connectorPrompt(this.connectors), this.lazyToolsPrompt(), uiPrompt, planPrompt, longTaskPrompt, `# Files you make\nYour workspace folder is ${ws}. Save documents, decks, sheets and other deliverables inside it (for example in reports/): every file you create or change there appears in the chat with a preview, its full path and Open / Show in folder buttons. When you finish, name the file and its full path.`];
     const gh = this.githubState();
     parts.push(await repoPrompt(this.home, chat ?? null, projectId));
     parts.push(folderPrompt(linkedFolders(this.home, chat ?? null, projectId), WIN ? "PowerShell (or cmd)" : "sh"));
@@ -820,15 +832,16 @@ export class Harness {
       const ctx = this.toolContext(trace.runId, { projectId: chat.projectId, chatId, approve, signal: opts.signal, model, onPlan, progressKey: key, onContract: (c) => relay({ type: "contract", contract: c }), onTerminal: (entry) => relay({ type: "terminal", entry: { ...entry, output: entry.output.slice(-2000) } }) });
       folders = ctx.folders ?? [];
       for (const t of chat.loadedTools ?? []) ctx.loadedTools!.add(t);
-      const tools = drafting ? this.tools().pick(DRAFT_TOOLS) : this.tools();
+      const tools = drafting ? this.tools().pick(DRAFT_TOOLS) : coordinator ? this.tools().pick(COORDINATOR_TOOLS) : this.tools();
       if (coordinator && !drafting) {
         for (const t of threadTools) tools.add(t);
         ctx.hooks.threads = this.threads.hooksFor(chatId);
       }
       const strategy = getStrategy(profile.strategy);
-      // Long task: an approved contract, or a plan of three or more steps. It then runs to completion.
+      // Long task: an approved contract, or a plan of three or more steps. Coordinators never run
+      // long loops themselves — heavy multi-step work always goes into a worker thread.
       const isLong = () => {
-        if (drafting) return false;
+        if (drafting || coordinator) return false;
         const c = readProgress(this.home, key).contract;
         return (!!c && !c.draft) || (turn.plan?.length ?? 0) >= 3;
       };
