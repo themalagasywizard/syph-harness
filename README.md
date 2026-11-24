@@ -24,6 +24,17 @@ Open **Settings → OpenRouter**, paste your key (from [openrouter.ai/keys](http
 
 Every chat runs on Syph's local server, not in the window. Start a long job, open **New chat** and start another, or go to Settings: both keep working. Running chats have a pulsing dot in the sidebar, and an amber dot when one is waiting for your approval. Open a chat again to see it catch up live. The square button stops that chat only.
 
+### Projects: a coordinator and its threads
+
+Every project has a **coordinator**: its main chat, at the top of the project page (or press **Coordinator**). Ask it for anything. Quick questions are answered right there; real work (editing files, code, research, long tasks) goes to its own **thread**, a separate chat with its own agent, and several can run at once.
+
+- **Threads rail:** beside the coordinator you see each thread with its state (working, needs you, ready for review, done, failed), its summary and what it cost. Click one to open it and talk to that agent directly, like any chat. A breadcrumb takes you back.
+- **Update cards:** when a thread finishes or needs you, a short card appears in the coordinator chat. The summary comes from what Syph saw the thread do (files changed, checks run), plus a one-line brief. The coordinator then follows up: it reads the thread and tells you the outcome, or starts the next step. Turn this off per project (**Follow up on finished threads**); Settings caps it per hour so two agents can't ping each other forever.
+- **Same rules everywhere:** a thread is an ordinary chat, so budgets, step and time caps, approvals, contracts, git checkpoints and Evolve reviews all apply. Approvals and questions stay in the thread; the coordinator points you there but can't approve for you. Threads can't start threads.
+- **Limits:** at most 3 threads run at once by default (Settings → Long tasks); more wait in a queue.
+- **Tasks:** a scheduled task in a project can **run as a coordinator thread**, so each run reports to the coordinator.
+- Plain chats in a project still work and are listed under **Other chats**.
+
 ### YOLO mode
 
 By default Syph asks before running shell commands (PowerShell on Windows), creating Tasks or using MCP tools. Click **Ask first** in the chat box to switch to **YOLO on**, or use **Settings → Tool approvals**. With YOLO on, those tools run without asking, and any that are already waiting run straight away. Scheduled Tasks have their own **YOLO for scheduled Tasks** switch, off by default, because nobody is watching them.
