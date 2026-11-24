@@ -846,6 +846,35 @@ final class DemoBackend: SyphBackend, @unchecked Sendable {
     }
     func setSafeMode(_ on: Bool) async throws -> UiState { sync { ui.safeMode = on; return ui } }
     func removeUi(_ id: String) async throws -> UiState { sync { ui.items.removeAll { $0.id == id }; return ui } }
+
+    // MARK: Newer screens (sample data)
+
+    private var demoSkills: [SkillInfo] = [
+        SkillInfo(name: "plan-and-verify", description: "For multi-step work: write a short plan, do it, then check the result.", active: true, body: "1. Write a plan with update_plan.\n2. Do each step.\n3. Check the result before you answer.", usage: .init(uses: 14, lastUsed: iso(Date().addingTimeInterval(-3600))), createdBy: "default"),
+        SkillInfo(name: "summarise", description: "Summaries of notes, papers or threads in under 200 words.", active: true, body: "Lead with the one-line takeaway, then three bullets.", usage: .init(uses: 6), createdBy: "default"),
+        SkillInfo(name: "weekly-digest", description: "Turn this week's research notes into the Friday digest.", active: false, body: "Use digest-template.md.", usage: .init(uses: 0), createdBy: "agent"),
+    ]
+    func skills() async throws -> SkillsResponse {
+        await pause(150)
+        return sync { SkillsResponse(skills: demoSkills, audit: SkillAudit(duplicates: [], unused: [.init(name: "weekly-digest", ageDays: 21)], inactive: ["weekly-digest"], empty: [])) }
+    }
+    func setSkillActive(_ name: String, active: Bool) async throws { sync { if let i = demoSkills.firstIndex(where: { $0.name == name }) { demoSkills[i].active = active } } }
+    func saveSkill(_ name: String, description: String, body: String) async throws {
+        sync { if let i = demoSkills.firstIndex(where: { $0.name == name }) { demoSkills[i].description = description; demoSkills[i].body = body } }
+    }
+    func createSkill(_ name: String, description: String, body: String) async throws {
+        sync { demoSkills.append(SkillInfo(name: name, description: description, active: true, body: body, createdBy: "user")) }
+    }
+    func deleteSkill(_ name: String) async throws { sync { demoSkills.removeAll { $0.name == name } } }
+    func usage(_ provider: String, model: String?, fresh: Bool) async throws -> ProviderUsage {
+        ProviderUsage(provider: provider, meters: [UsageMeter(label: "Credit", used: 4.12, total: 20, unit: "usd")])
+    }
+    func terminal(_ chatId: String) async throws -> TerminalState {
+        TerminalState(entries: [TerminalEntry(id: "cmd1", chatId: chatId, command: "git status --short", cwd: Self.demoFolder, shell: "powershell", status: "done", exitCode: .number(0), startedAt: iso(Date().addingTimeInterval(-90)), endedAt: iso(Date().addingTimeInterval(-89)), output: " M notes/attention.md\n?? digest.md\n")], session: false, mode: "ask", yolo: false, shell: "powershell")
+    }
+    func folders(projectId: String?, chatId: String?) async throws -> [FolderLink] {
+        [FolderLink(path: "C:\\Users\\you\\Documents\\Notes", name: "Notes", access: "read", scope: "chat", exists: true)]
+    }
 }
 
 func iso(_ d: Date) -> String { ISO8601DateFormatter.syph.string(from: d) }

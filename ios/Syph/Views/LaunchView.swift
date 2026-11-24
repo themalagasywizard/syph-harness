@@ -102,7 +102,7 @@ struct LaunchView: View {
 
     private func draw(_ ctx: inout GraphicsContext, size: CGSize, t: Double) {
         let c = CGPoint(x: size.width / 2, y: size.height * 0.44)
-        let unit = min(size.width, size.height) / 2
+        let unit: Double = Double(min(size.width, size.height)) / 2
         let hb = heartbeat(t)
         let (ar, ag, ab) = Self.accent
         let accent = Color(red: ar, green: ag, blue: ab)
@@ -162,8 +162,8 @@ struct LaunchView: View {
         let resolve = Ease.spring(Ease.seg(t, 2.55, 3.55), 11, 4.5)
         let swim = max(0, swimIn * (1 - resolve))
         let alpha = Ease.sstep(1.1, 1.35, t)
-        let markR = unit * 0.5
-        let scale = markR / 104
+        let markR: Double = unit * 0.5
+        let scale: Double = markR / 104
         let rot = -0.25 * (1 - Ease.eio(Ease.seg(t, 1.2, 2.6)))
         let pose = MarkGeometry.Pose(grow: G, seed: 8.5, twist: 2.4, swim: swim, beat: hb * 0.6, t: t)
         let mark = MarkGeometry.path(pose).applying(
@@ -211,7 +211,10 @@ struct LaunchView: View {
                 for j in 0..<3 {
                     let ph = (t * 0.9 + Double(j) / 3 + Double(s) * 0.17).truncatingRemainder(dividingBy: 1)
                     let q = MarkGeometry.deform(12 + ph * 76, Double(s) * .pi / 2, pose)
-                    let pt = CGPoint(x: c.x + (q.x * cos(rot) - q.y * sin(rot)) * scale, y: c.y + (q.x * sin(rot) + q.y * cos(rot)) * scale)
+                    let qx = Double(q.x), qy = Double(q.y), cr = cos(rot), sr = sin(rot)
+                    let px: Double = Double(c.x) + (qx * cr - qy * sr) * scale
+                    let py: Double = Double(c.y) + (qx * sr + qy * cr) * scale
+                    let pt = CGPoint(x: px, y: py)
                     let a = sin(ph * .pi) * work, rr = 5.0
                     ctx.fill(Path(ellipseIn: CGRect(x: pt.x - rr, y: pt.y - rr, width: rr * 2, height: rr * 2)),
                              with: .radialGradient(Gradient(colors: [.white.opacity(a), .white.opacity(0)]), center: pt, startRadius: 0, endRadius: rr))
