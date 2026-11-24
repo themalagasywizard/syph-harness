@@ -140,9 +140,10 @@ final class LocalBackend: SyphBackend, @unchecked Sendable {
 
     func state() async throws -> AppState {
         let mirror = Mirror.state()
-        let mine = sync { chats }.map { c in
+        let running: Set<String> = sync { Set(live.filter { !$0.value.done }.keys) }
+        let mine: [ChatSummary] = sync { chats }.map { c in
             ChatSummary(id: c.id, title: c.title, projectId: c.projectId, model: c.model, updatedAt: c.updatedAt,
-                        status: sync { live[c.id].map { $0.done ? nil : "running" } ?? nil })
+                        status: running.contains(c.id) ? "running" : nil)
         }
         let fromComputer = (mirror?.chats ?? []).filter { $0.role != "thread" }
         var cfg = mirror?.config ?? Config(

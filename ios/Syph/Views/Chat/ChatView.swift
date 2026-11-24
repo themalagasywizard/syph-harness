@@ -230,7 +230,7 @@ private struct ChatScreen: View {
                 if vm.noKey {
                     HStack(spacing: 10) {
                         Image(systemName: "key.fill").foregroundStyle(Palette.warn)
-                        Text("Add your OpenRouter key in Settings to chat with \(Fmt.model(vm.model)).").font(.footnote)
+                        Text("Add your \(Fmt.providerLabel(vm.keyProvider)) key in Settings\(app.isStandalone ? " on this phone" : "") to chat with \(Fmt.model(vm.model)).").font(.footnote)
                         Spacer(minLength: 0)
                         Button("Open") { app.open(.settings) }.font(.footnote.weight(.semibold))
                     }
