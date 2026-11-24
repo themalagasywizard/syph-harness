@@ -282,6 +282,11 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   };
   route("POST", "/api/threads/:id/resolve", (_q, _s, p, body) => ({ ok: true, message: h.threads.resolve(parentOf(p.id), p.id, body?.resolved !== false) }));
   route("POST", "/api/threads/:id/stop", (_q, _s, p) => ({ ok: true, message: h.threads.stop(parentOf(p.id), p.id) }));
+  route("DELETE", "/api/threads/:id", (_q, _s, p) => {
+    const pid = parentOf(p.id);
+    h.terminal.runningFor(p.id).forEach((e) => h.terminal.stop(e.id));
+    return { ok: true, message: h.threads.remove(pid, p.id) };
+  });
   route("POST", "/api/threads/:id/start-model", (_q, _s, p, body) => {
     parentOf(p.id);
     if (!body?.model || typeof body.model !== "string") throw httpError(400, "model is required");
@@ -308,7 +313,17 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
     if (!c.role && body?.projectId && store.getProject(home, String(body.projectId))) store.adoptIntoProject(home, c.id, String(body.projectId));
     return { ok: true };
   });
-  route("DELETE", "/api/chats/:id", (_q, _s, p) => (h.stopChat(p.id), h.terminal.runningFor(p.id).forEach((e) => h.terminal.stop(e.id)), store.deleteChat(home, p.id), { ok: true }));
+  route("DELETE", "/api/chats/:id", (_q, _s, p) => {
+    const c = store.getChat(home, p.id);
+    h.terminal.runningFor(p.id).forEach((e) => h.terminal.stop(e.id));
+    if (c?.role === "thread" && c.parentId) {
+      h.threads.remove(c.parentId, p.id);
+    } else {
+      h.stopChat(p.id);
+      store.deleteChat(home, p.id);
+    }
+    return { ok: true };
+  });
   // A message starts a run on the server and returns at once. The run keeps going whatever
   // the window does; /stream follows it (replaying from the start), /stop ends it.
   route("POST", "/api/chats/:id/messages", (_q, _s, p, body) => h.startChat(p.id, String(body?.text ?? ""), { model: body?.model, attachments: Array.isArray(body?.attachments) ? body.attachments : undefined, mode: body?.mode === "long" ? "long" : undefined }));

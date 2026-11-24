@@ -2,6 +2,7 @@
 // and gets a short update card when each one finishes or needs the user. A thread runs through the
 // same live-chat path as any chat, so budgets, loop guards, approvals, contracts and Evolve reviews
 // all apply unchanged. Nothing here runs for chats that are neither a coordinator nor a thread.
+import { rmSync } from "node:fs";
 import type { Home } from "./home.ts";
 import { progressKey, readProgress } from "./longtask.ts";
 import { complete } from "./providers/llm.ts";
@@ -329,6 +330,25 @@ export class Threads {
     });
     this.host.changed(coordinatorId);
     return resolved ? `Resolved "${t.title}".` : `Reopened "${t.title}".`;
+  }
+
+  /** Permanently delete a thread (stops it first if running, removes its update cards, frees its slot). */
+  remove(coordinatorId: string, threadId: string) {
+    const t = this.own(coordinatorId, threadId);
+    if (this.host.isLive(t.id)) this.host.stop(t.id);
+    this.running.delete(t.id);
+    store.deleteChat(this.home, t.id);
+    if (!t.progressKey) {
+      const safe = `chat-${t.id}`.replace(/[^\w.-]+/g, "_");
+      rmSync(this.home.path("progress", `${safe}.json`), { force: true });
+      rmSync(this.home.path("progress", `${safe}.md`), { force: true });
+    }
+    store.patchChat(this.home, coordinatorId, (c) => {
+      c.turns = c.turns.filter((x) => x.threadUpdate?.threadId !== t.id);
+    });
+    this.drain();
+    this.host.changed(coordinatorId);
+    return `Deleted "${t.title}".`;
   }
 
   hooksFor(coordinatorId: string): ThreadHooks {

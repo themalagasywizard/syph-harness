@@ -686,7 +686,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const body = (
     <>
       <div className="topbar">
-        {role === "thread" && chat?.parentId && <ThreadCrumb parentId={chat.parentId} projectName={project?.name} state={chat.threadState} live={summary?.status} />}
+        {role === "thread" && chat?.parentId && <ThreadCrumb parentId={chat.parentId} threadId={cid} title={chat.title} projectName={project?.name} state={chat.threadState} live={summary?.status} />}
         <span className="title ellipsis">{role === "coordinator" ? <>{project?.name ?? chat?.title} <span className="hint coord-tag">Coordinator</span></> : chat?.title && chat.title !== "New chat" ? chat.title : ""}</span>
         <div className="spacer" />
         {role ? (

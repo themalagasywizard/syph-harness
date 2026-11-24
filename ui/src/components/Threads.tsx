@@ -1,7 +1,7 @@
 // Project threads in the interface: the rail beside a coordinator chat, the update cards it
 // receives, and the way back from a thread to its coordinator.
 import { useEffect, useState } from "react";
-import { ArrowLeft, CheckCheck, CircleDot, ExternalLink, FileText, GitBranch, PanelRightClose, PanelRightOpen, RotateCcw, Square } from "lucide-react";
+import { ArrowLeft, CheckCheck, CircleDot, ExternalLink, FileText, GitBranch, PanelRightClose, PanelRightOpen, RotateCcw, Square, Trash2 } from "lucide-react";
 import { useApp } from "../App";
 import { api, relTime, subscribe, THREAD_STATE, usd, type ProjectThreads, type ThreadState, type ThreadSummary, type ThreadUpdate } from "../api";
 
@@ -42,6 +42,7 @@ export function StateBadge({ state, live }: { state?: ThreadState; live?: "runni
 
 const resolveThread = (id: string, resolved = true) => api.post(`/threads/${id}/resolve`, { resolved });
 const stopThread = (id: string) => api.post(`/threads/${id}/stop`, {});
+export const deleteThread = (id: string) => api.del(`/threads/${id}`);
 
 /** The card a coordinator chat shows when one of its threads finishes or needs the user. */
 export function ThreadUpdateCard({ update, current }: { update: ThreadUpdate; current?: ThreadSummary }) {
@@ -120,6 +121,18 @@ export function ThreadRail({ projectId, open, setOpen }: { projectId: string; op
               {t.resolved && (
                 <button className="icon-btn sm" title="Reopen" onClick={(e) => { e.stopPropagation(); resolveThread(t.id, false); }}><RotateCcw size={13} /></button>
               )}
+              <button
+                className="icon-btn sm tr-del"
+                title="Delete thread"
+                aria-label={`Delete thread ${t.title}`}
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!confirm(`Delete thread "${t.title}"?`)) return;
+                  await deleteThread(t.id);
+                }}
+              >
+                <Trash2 size={13} />
+              </button>
             </div>
           </div>
         ))}
@@ -131,15 +144,27 @@ export function ThreadRail({ projectId, open, setOpen }: { projectId: string; op
   );
 }
 
-/** At the top of a thread: back to the coordinator, and where the thread is. */
-export function ThreadCrumb({ parentId, projectName, state, live }: { parentId: string; projectName?: string; state?: ThreadState; live?: "running" | "waiting" }) {
-  const { go } = useApp();
+/** At the top of a thread: back to the coordinator, where the thread is, and a delete action. */
+export function ThreadCrumb({ parentId, threadId, title, projectName, state, live }: { parentId: string; threadId?: string; title?: string; projectName?: string; state?: ThreadState; live?: "running" | "waiting" }) {
+  const { go, refresh } = useApp();
+  const remove = async () => {
+    if (!threadId) return;
+    if (!confirm(`Delete thread "${title || "this thread"}"?`)) return;
+    await deleteThread(threadId);
+    await refresh();
+    go({ kind: "chat", chatId: parentId });
+  };
   return (
     <div className="thread-crumb">
       <button className="pill" onClick={() => go({ kind: "chat", chatId: parentId })} title="Back to the project's coordinator">
         <ArrowLeft size={15} /> <span className="ellipsis pill-label">{projectName ?? "Coordinator"}</span>
       </button>
       <StateBadge state={state} live={live} />
+      {threadId && (
+        <button className="icon-btn sm tr-del" onClick={remove} title="Delete this thread" aria-label="Delete this thread">
+          <Trash2 size={14} />
+        </button>
+      )}
     </div>
   );
 }

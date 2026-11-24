@@ -167,6 +167,10 @@ test("a thread that asks a question is blocked and doesn't wake the coordinator"
   assert.throws(() => h.threads.read(other.id, t.id), /No thread/);
   assert.match(h.threads.resolve(coord.id, t.id), /Resolved/);
   assert.equal(store.getChat(home, t.id)!.resolved, true);
+  assert.match(h.threads.remove(coord.id, t.id), /Deleted/);
+  assert.equal(store.getChat(home, t.id), null);
+  assert.equal(store.listThreads(home, coord.id).length, 0);
+  assert.equal(store.getChat(home, coord.id)!.turns.filter((x) => x.threadUpdate?.threadId === t.id).length, 0);
   await h.close();
 });
 

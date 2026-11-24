@@ -12,7 +12,7 @@ export async function openProject(go: (v: View) => void, projectId: string) {
     go({ kind: "projects", projectId });
   }
 }
-import { StateBadge, useProjectThreads } from "../components/Threads";
+import { deleteThread, StateBadge, useProjectThreads } from "../components/Threads";
 import { Toggle } from "../components/Toggle";
 import { FileIcon, FileActions, revealFile } from "../components/FilePreview";
 import { Slot } from "../ext";
@@ -178,13 +178,34 @@ function ProjectDetailView({ id }: { id: string }) {
           <div className="list">
             {!threads?.threads.length && <div className="empty">No threads yet. Ask the coordinator for some work and it starts one.</div>}
             {threads?.threads.map((t) => (
-              <button key={t.id} className={`row thread-row ${t.resolved ? "resolved" : ""}`} style={{ gridTemplateColumns: "18px 1fr auto auto auto", width: "100%", textAlign: "left" }} onClick={() => go({ kind: "chat", chatId: t.id })}>
+              <div
+                key={t.id}
+                role="button"
+                tabIndex={0}
+                className={`row thread-row ${t.resolved ? "resolved" : ""}`}
+                style={{ gridTemplateColumns: "18px 1fr auto auto auto auto", width: "100%", textAlign: "left" }}
+                onClick={() => go({ kind: "chat", chatId: t.id })}
+                onKeyDown={(e) => e.key === "Enter" && go({ kind: "chat", chatId: t.id })}
+              >
                 <GitBranch size={15} className="sub" />
                 <span className="ellipsis"><span className="name">{t.title}</span>{t.summary && <span className="sub thread-sum"> — {t.summary}</span>}</span>
                 <StateBadge state={t.threadState} live={t.status} />
                 <span className="sub">{usd(t.costUsd)}</span>
                 <span className="sub">{relTime(t.updatedAt)}</span>
-              </button>
+                <button
+                  className="icon-btn sm tr-del"
+                  title="Delete thread"
+                  aria-label={`Delete thread ${t.title}`}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (!confirm(`Delete thread "${t.title}"?`)) return;
+                    await deleteThread(t.id);
+                    refresh();
+                  }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
             ))}
           </div>
         )}
