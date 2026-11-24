@@ -6,21 +6,44 @@ import { auditSkills, findSkill, listSkills, readSkill, recordSkillUse, SKILL_NA
 import { listProposals } from "../evolve/proposals.ts";
 import { headTail, truncate } from "../util.ts";
 import { scopeViolation } from "../scope.ts";
+import { folderFor, within } from "../folders.ts";
+import { commandReport, defaultShell, WIN, type ShellKind } from "../terminal.ts";
 import { defineTool, type Tool, type ToolContext } from "./types.ts";
 
 /** Refuse a write the task's contract puts out of bounds. Permissions, not prose. */
 function checkScope(ctx: ToolContext, abs: string) {
-  const v = scopeViolation(ctx.hooks.contract?.get(), relative(ctx.workspace, abs));
-  if (v) throw new Error(v.replace(/^Error: /, ""));
+  const c = ctx.hooks.contract?.get();
+  const folder = within(ctx.workspace, abs) ? null : folderFor(ctx.folders ?? [], abs);
+  if (!folder) {
+    const v = scopeViolation(c, relative(ctx.workspace, abs));
+    if (v) throw new Error(v.replace(/^Error: /, ""));
+    return;
+  }
+  // In a linked folder the contract's paths may be written relative to the folder or in full.
+  const vs = [scopeViolation(c, relative(folder.path, abs)), scopeViolation(c, abs.replace(/\\/g, "/"))];
+  const never = vs.find((v) => v?.includes("off limits"));
+  if (never) throw new Error(never.replace(/^Error: /, ""));
+  if (vs.every(Boolean)) throw new Error(vs[0]!.replace(/^Error: /, ""));
 }
 
-/** Resolve a user path inside the workspace; refuse anything that escapes it. */
-function inWorkspace(ctx: ToolContext, p: string) {
-  const abs = resolve(ctx.workspace, p || ".");
-  const rel = relative(ctx.workspace, abs);
-  if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) throw new Error(`Path is outside the workspace: ${p}`);
+/**
+ * Resolve a path the model gave. Relative paths are in the workspace. Absolute ones may be in the
+ * workspace or in a folder the user linked; writing needs a folder linked with write access.
+ */
+export function resolvePath(ctx: Pick<ToolContext, "workspace" | "folders">, p: string, mode: "read" | "write" = "read") {
+  const raw = (p || ".").trim();
+  const abs = isAbsolute(raw) ? resolve(raw) : resolve(ctx.workspace, raw);
+  if (within(ctx.workspace, abs)) return abs;
+  const folder = folderFor(ctx.folders ?? [], abs);
+  if (!folder) {
+    const linked = (ctx.folders ?? []).map((f) => f.path);
+    throw new Error(`Path is outside the workspace${linked.length ? ` and the linked folders (${linked.join(", ")})` : " (no folder is linked)"}: ${p}. Ask the user to link the folder if you need it.`);
+  }
+  if (mode === "write" && folder.access !== "write") throw new Error(`${folder.path} is linked read-only, so ${p} can't be changed. Ask the user to allow writing in it.`);
   return abs;
 }
+
+const inWorkspace = (ctx: ToolContext, p: string, mode: "read" | "write" = "read") => resolvePath(ctx, p, mode);
 
 const SKIP = new Set(["node_modules", ".git", "dist", ".venv", "__pycache__"]);
 
@@ -40,7 +63,7 @@ function walk(dir: string, base: string, out: string[], depth: number, max: numb
 
 export const listFiles = defineTool({
   name: "list_files",
-  description: "List files and folders in the workspace (recursive up to a depth). Use before reading paths you have not seen.",
+  description: "List files and folders in the workspace or a linked folder (full path), recursive up to a depth. Use before reading paths you have not seen.",
   schema: z.object({ path: z.string().default("."), depth: z.number().int().min(0).max(6).default(3) }),
   permission: "auto",
   run: ({ path, depth }, ctx) => {
@@ -57,7 +80,7 @@ export const READ_DEFAULT_LINES = 400;
 
 export const readFile = defineTool({
   name: "read_file",
-  description: `Read a text file from the workspace. Without a range it returns the first ${READ_DEFAULT_LINES} lines and says how many there are; pass startLine/endLine (1-based, inclusive) for other parts.`,
+  description: `Read a text file from the workspace or a linked folder. Without a range it returns the first ${READ_DEFAULT_LINES} lines and says how many there are; pass startLine/endLine (1-based, inclusive) for other parts.`,
   schema: z.object({ path: z.string(), startLine: z.number().int().positive().optional(), endLine: z.number().int().positive().optional() }),
   permission: "auto",
   run: ({ path, startLine, endLine }, ctx) => {
@@ -78,25 +101,26 @@ export const readFile = defineTool({
 
 export const writeFile = defineTool({
   name: "write_file",
-  description: "Create or overwrite a file in the workspace with the given content.",
+  description: "Create or overwrite a file in the workspace, or in a folder linked with write access (full path), with the given content.",
   schema: z.object({ path: z.string(), content: z.string() }),
   permission: "auto",
   run: ({ path, content }, ctx) => {
-    const abs = inWorkspace(ctx, path);
+    const abs = inWorkspace(ctx, path, "write");
     checkScope(ctx, abs);
+    const existed = existsSync(abs);
     mkdirSync(dirname(abs), { recursive: true });
     writeFileSync(abs, content);
-    return `Wrote ${content.length} characters to ${path}`;
+    return `Wrote ${content.length} characters to ${path}${existed ? " (replaced the old file)" : " (new file)"}`;
   },
 });
 
 export const editFile = defineTool({
   name: "edit_file",
-  description: "Replace an exact snippet in a workspace file. old_text must match exactly once; include surrounding lines to make it unique.",
+  description: "Replace an exact snippet in a file in the workspace or a folder linked with write access. old_text must match exactly once; include surrounding lines to make it unique.",
   schema: z.object({ path: z.string(), old_text: z.string().min(1), new_text: z.string() }),
   permission: "auto",
   run: ({ path, old_text, new_text }, ctx) => {
-    const abs = inWorkspace(ctx, path);
+    const abs = inWorkspace(ctx, path, "write");
     if (!existsSync(abs)) return `Error: file not found: ${path}`;
     checkScope(ctx, abs);
     const src = readFileSync(abs, "utf8");
@@ -110,7 +134,7 @@ export const editFile = defineTool({
 
 export const searchFiles = defineTool({
   name: "search_files",
-  description: "Search workspace files for a text or regex pattern. Returns matching lines with paths and line numbers.",
+  description: "Search files in the workspace or a linked folder for a text or regex pattern. Returns matching lines with paths and line numbers.",
   schema: z.object({ pattern: z.string(), path: z.string().default("."), regex: z.boolean().default(false) }),
   permission: "auto",
   run: ({ pattern, path, regex }, ctx) => {
@@ -137,7 +161,6 @@ export const searchFiles = defineTool({
   },
 });
 
-const WIN = process.platform === "win32";
 
 /** PowerShell on Windows, the default POSIX shell elsewhere. */
 export function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal) {
@@ -152,12 +175,82 @@ export function runShell(command: string, cwd: string, timeoutMs: number, signal
   });
 }
 
+/** Where a command runs: the folder the model named (workspace or a linked folder), else the first writable linked folder, else the workspace. */
+export function commandCwd(ctx: Pick<ToolContext, "workspace" | "folders">, cwd?: string): { abs: string; writable: boolean; linked: boolean } {
+  const folders = ctx.folders ?? [];
+  if (!cwd) {
+    const primary = folders.find((f) => f.access === "write" && existsSync(f.path));
+    return primary ? { abs: primary.path, writable: true, linked: true } : { abs: ctx.workspace, writable: true, linked: false };
+  }
+  const abs = resolvePath(ctx, cwd, "read");
+  if (!existsSync(abs) || !statSync(abs).isDirectory()) throw new Error(`No folder at ${abs}.`);
+  if (within(ctx.workspace, abs)) return { abs, writable: true, linked: false };
+  return { abs, writable: folderFor(folders, abs)?.access === "write", linked: true };
+}
+
+const shellSchema = z.object({
+  command: z.string().min(1),
+  cwd: z.string().optional().describe("Folder to run in: a linked folder (full path) or a workspace folder. Default: the first linked folder with write access, else the workspace."),
+  timeoutSec: z.number().int().min(1).max(3600).default(120),
+  background: z.boolean().default(false).describe("Start it and return at once (servers, watchers, long builds). Read it later with command_output, stop it with stop_command."),
+  ...(WIN ? { shell: z.enum(["powershell", "cmd"]).default("powershell").describe("powershell (default) or cmd.") } : {}),
+});
+
 export const shell = defineTool({
   name: "shell",
-  description: `Run a ${WIN ? "PowerShell" : "shell (sh)"} command in the workspace folder and return stdout, stderr and the exit code. Asks the user first unless YOLO mode is on.`,
-  schema: z.object({ command: z.string(), timeoutSec: z.number().int().min(1).max(600).default(60) }),
+  description: `Run a ${WIN ? "PowerShell (or cmd)" : "shell (sh)"} command on the user's computer, in a linked folder or the workspace, and return its output and exit code. The user sees it in the chat's command log and can stop it; depending on their settings they are asked first.`,
+  schema: shellSchema,
   permission: "ask",
-  run: ({ command, timeoutSec }, ctx) => runShell(command, ctx.workspace, timeoutSec * 1000, ctx.signal),
+  needsApproval: (args, ctx) => {
+    const where = commandCwd(ctx, args.cwd);
+    return `Syph wants to run a command in ${where.abs}${where.writable ? "" : " (a read-only folder)"}.`;
+  },
+  run: async (args, ctx) => {
+    const { command, timeoutSec, background } = args;
+    const kind = ((args as { shell?: ShellKind }).shell ?? defaultShell()) as ShellKind;
+    const where = commandCwd(ctx, args.cwd);
+    if (!ctx.terminal) return runShell(command, where.abs, timeoutSec * 1000, ctx.signal);
+    const { entry, done } = ctx.terminal.start({ command, cwd: where.abs, shell: kind, chatId: ctx.chatId, runId: ctx.runId, timeoutMs: background ? 0 : timeoutSec * 1000, signal: ctx.signal, background });
+    ctx.hooks.terminal?.(entry);
+    if (background) {
+      // Give it a moment: a command that fails at once should say so now.
+      const early = await Promise.race([done, new Promise<null>((r) => setTimeout(() => r(null), 3000))]);
+      if (early) {
+        ctx.hooks.terminal?.(early);
+        return early.status === "done" ? commandReport(early) : `Error: the command ended at once.\n${commandReport(early)}`;
+      }
+      return `Started in the background as ${entry.id} in ${where.abs}. Output so far:\n${entry.output.slice(-3000) || "(none yet)"}\nRead more with command_output, stop it with stop_command.`;
+    }
+    const end = await done;
+    ctx.hooks.terminal?.(end);
+    const report = commandReport(end);
+    return end.status === "stopped" ? `Error: the user stopped this command.\n${report}` : end.status === "timeout" ? `Error: the command timed out after ${timeoutSec}s.\n${report}` : report;
+  },
+});
+
+export const commandOutput = defineTool({
+  name: "command_output",
+  description: "Read the output of a command started with shell (for example a background server), and whether it is still running.",
+  schema: z.object({ id: z.string() }),
+  permission: "auto",
+  run: ({ id }, ctx) => {
+    const e = ctx.terminal?.get(id);
+    if (!e || e.chatId !== ctx.chatId) return `Error: no command ${id} in this chat.`;
+    return `${e.status === "running" ? "still running" : e.status}\n${commandReport(e)}`;
+  },
+});
+
+export const stopCommand = defineTool({
+  name: "stop_command",
+  description: "Stop a command started with shell (and everything it started).",
+  schema: z.object({ id: z.string() }),
+  permission: "auto",
+  run: async ({ id }, ctx) => {
+    const e = ctx.terminal?.get(id);
+    if (!e || e.chatId !== ctx.chatId) return `Error: no command ${id} in this chat.`;
+    if (!ctx.terminal!.stop(id)) return `${id} already ended (${e.status}).`;
+    return `Stopped ${id}.`;
+  },
 });
 
 export const WEB_PAGE_CHARS = 12_000;
@@ -317,4 +410,4 @@ export const subagent = defineTool({
   run: async ({ prompt }, ctx) => (ctx.hooks.runSubagent ? ctx.hooks.runSubagent(prompt) : "Sub-agents are not available here."),
 });
 
-export const builtinTools: Tool[] = [listFiles, readFile, writeFile, editFile, searchFiles, shell, webFetch, readSkillTool, listSkillsTool, proposeSkill, proposeSkillChanges, proposeMemory, createTaskTool, subagent] as Tool[];
+export const builtinTools: Tool[] = [listFiles, readFile, writeFile, editFile, searchFiles, shell, commandOutput, stopCommand, webFetch, readSkillTool, listSkillsTool, proposeSkill, proposeSkillChanges, proposeMemory, createTaskTool, subagent] as Tool[];

@@ -27,7 +27,7 @@ import { builtinTools } from "./tools/builtin.ts";
 import { ToolRegistry } from "./tools/registry.ts";
 import type { Tool, ToolContext } from "./tools/types.ts";
 import { Trace, addRating, listRuns } from "./trace.ts";
-import type { AgentEvent, Attachment, ChatMessage, ChatRecord, Contract, PlanStep, Recap, Task, Turn } from "./types.ts";
+import type { AgentEvent, Attachment, ChatMessage, ChatRecord, Contract, PlanStep, Recap, Task, TerminalEntry, Turn } from "./types.ts";
 import { id, now } from "./util.ts";
 import { FileIndex, changedFiles, mentionedFiles, snapshot } from "./files/index.ts";
 import { actionAt, checkUi, fillTemplate, flattenItem, getUi, itemsFrom, uiAgentTools, uiPrompt, type UiButton, type UiEnv } from "./ui-ext.ts";
@@ -37,6 +37,11 @@ import { mistakes, needsReview, reviewRun } from "./evolve/review.ts";
 import { attachmentsForModel, saveAttachment } from "./attachments.ts";
 import { Threads } from "./threads.ts";
 import { COORDINATOR_PROMPT, threadTools } from "./tools/threads.ts";
+import { folderFor, folderPrompt, linkedFolders, linkFolder, setFolderAccess, unlinkFolder, within, type LinkedFolder } from "./folders.ts";
+import { Terminal, WIN } from "./terminal.ts";
+import { commandCwd } from "./tools/builtin.ts";
+import { statSync, existsSync as fileExists } from "node:fs";
+import { basename } from "node:path";
 
 /** Files people read: shown in the answer. Code and data files are shown only when the user asked for them. */
 const READABLE = /\.(md|markdown|txt|pdf|docx?|odt|rtf|xlsx?|ods|csv|tsv|pptx?|odp|key|html?|png|jpe?g|gif|webp|svg|bmp|mp3|wav|m4a|mp4|mov|webm|zip)$/i;
@@ -86,7 +91,7 @@ export interface Job {
   endedAt?: string;
 }
 
-type Listener = (e: { type: "job"; job: Job } | { type: "task"; task: Task } | { type: "proposal"; id: string } | { type: "chats" } | { type: "threads"; coordinatorId?: string } | { type: "connectors" } | { type: "ui" }) => void;
+type Listener = (e: { type: "job"; job: Job } | { type: "task"; task: Task } | { type: "proposal"; id: string } | { type: "chats" } | { type: "terminal"; chatId?: string; entry: TerminalEntry } | { type: "threads"; coordinatorId?: string } | { type: "connectors" } | { type: "ui" }) => void;
 
 interface LiveRun {
   ac: AbortController;
@@ -97,7 +102,7 @@ interface LiveRun {
 }
 
 /** Tools that never write files, so there is nothing to look for after them. */
-const READ_ONLY_TOOLS = new Set(["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_skills", "propose_skill_changes", "list_connectors", "list_ui", "propose_ui_change", "propose_skill", "propose_memory", "create_task", "create_connector", "update_plan", "list_repos", "github_repos", "github_api", "github_pr_create"]);
+const READ_ONLY_TOOLS = new Set(["command_output", "stop_command", "list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_skills", "propose_skill_changes", "list_connectors", "list_ui", "propose_ui_change", "propose_skill", "propose_memory", "create_task", "create_connector", "update_plan", "list_repos", "github_repos", "github_api", "github_pr_create"]);
 /** What the agent may use while it drafts a contract in long-task mode: look around, write nothing. */
 const DRAFT_TOOLS = ["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_skills", "list_repos", "github_repos", "list_connectors", "set_contract", "ask_user", "update_plan", "note_progress"];
 const THREAD_PROMPT = `# You are working in a thread
@@ -114,7 +119,7 @@ export class Harness {
   private mcp: McpConnection[] = [];
   extensionReports: ExtensionReport[] = [];
   scheduler?: Scheduler;
-  private approvals = new Map<string, { resolve: (ok: boolean) => void; emit: (e: AgentEvent) => void; chatId?: string; tool?: string; command?: string | null }>();
+  private approvals = new Map<string, { resolve: (ok: boolean) => void; emit: (e: AgentEvent) => void; chatId?: string; tool?: string; command?: string | null; writable?: boolean }>();
   /** Chats that are running right now, each independent of any open window. */
   private live = new Map<string, LiveRun>();
   readonly jobs = new Map<string, Job>();
@@ -125,10 +130,16 @@ export class Harness {
   readonly connectors: Connectors;
   /** Project coordinators and their threads. */
   readonly threads: Threads;
+  /** Terminal commands the agent runs, with each chat's command log. */
+  readonly terminal: Terminal;
+  /** Chats where the user chose "Allow for this chat": their commands run without asking until Syph restarts. */
+  private sessionAllowed = new Set<string>();
 
   constructor(home?: Home | string) {
     this.home = home instanceof Home ? home : new Home(home);
     this.connectors = new Connectors(this.home, [googleWorkspace, github]);
+    this.terminal = new Terminal(this.home);
+    this.terminal.onChange((entry) => this.broadcast({ type: "terminal", chatId: entry.chatId, entry }));
     this.threads = new Threads({
       home: this.home,
       isLive: (cid) => this.live.has(cid),
@@ -160,6 +171,7 @@ export class Harness {
 
   async close() {
     this.scheduler?.stop();
+    this.terminal.stopAll();
     await Promise.all(this.mcp.map((m) => m.close()));
   }
 
@@ -267,6 +279,56 @@ export class Harness {
     return { ok: true };
   }
 
+  // ---------- Folders on the user's computer, and the terminal ----------
+
+  /** The folders a chat (with its coordinator and project) or a project can use. */
+  folders(target: { projectId?: string; chatId?: string }) {
+    const chat = target.chatId ? store.getChat(this.home, target.chatId) : null;
+    const list = target.chatId ? linkedFolders(this.home, chat, target.projectId) : linkedFolders(this.home, null, target.projectId);
+    return list.map((f) => ({ ...f, exists: fileExists(f.path) && statSync(f.path).isDirectory() }));
+  }
+
+  linkFolder(input: { path: string; access?: "read" | "write"; name?: string; projectId?: string; chatId?: string }) {
+    const f = linkFolder(this.home, input);
+    this.broadcast({ type: "chats" });
+    return f;
+  }
+
+  unlinkFolder(target: { projectId?: string; chatId?: string }, path: string) {
+    unlinkFolder(this.home, target, path);
+    this.broadcast({ type: "chats" });
+    return { ok: true };
+  }
+
+  setFolderAccess(target: { projectId?: string; chatId?: string }, path: string, access: "read" | "write") {
+    setFolderAccess(this.home, target, path, access);
+    this.broadcast({ type: "chats" });
+    return { ok: true };
+  }
+
+  /** True when `abs` is in a folder some chat or project linked (for previews and Show in folder). */
+  inLinkedFolder(abs: string) {
+    const all = [...store.listProjects(this.home).flatMap((p) => p.folders ?? []), ...store.listChats(this.home).flatMap((c) => c.folders ?? [])];
+    return all.some((f) => within(f.path, abs));
+  }
+
+  /** The chat's command log and how its commands are allowed, for the UI. */
+  terminalState(chatId: string) {
+    const mode = this.home.config().approval?.terminal ?? "ask";
+    return { entries: this.terminal.log(chatId), session: this.sessionAllowed.has(chatId), mode, yolo: !!this.home.config().approval?.yolo, shell: WIN ? "PowerShell" : "sh" };
+  }
+
+  stopCommand(entryId: string) {
+    return { ok: this.terminal.stop(entryId) };
+  }
+
+  /** Take back "Allow for this chat". */
+  endTerminalSession(chatId: string) {
+    this.sessionAllowed.delete(chatId);
+    this.broadcast({ type: "chats" });
+    return { ok: true };
+  }
+
   /** Linked repos with their branch and changes, for a chat or project. */
   async repoStatuses(target: { projectId?: string; chatId?: string }) {
     const chat = target.chatId ? store.getChat(this.home, target.chatId) : null;
@@ -313,6 +375,7 @@ export class Harness {
     const parts = [connectorPrompt(this.connectors), this.lazyToolsPrompt(), uiPrompt, planPrompt, longTaskPrompt, `# Files you make\nYour workspace folder is ${store.workspaceFor(this.home, projectId)}. Save documents, decks, sheets and other deliverables inside it (for example in reports/): every file you create or change there appears in the chat with a preview, its full path and Open / Show in folder buttons. When you finish, name the file and its full path.`];
     const gh = this.githubState();
     parts.push(await repoPrompt(this.home, chat ?? null, projectId));
+    parts.push(folderPrompt(linkedFolders(this.home, chat ?? null, projectId), WIN ? "PowerShell (or cmd)" : "sh"));
     parts.push(gh.connected ? `GitHub is connected${gh.account ? ` as ${gh.account}` : ""}: handle it yourself with github_repos, github_clone, git, github_pr_create and github_api.` : "GitHub isn't connected, so only public repos can be cloned. If the user wants their own repos, ask them to open Connectors → GitHub and paste a token.");
     return parts.join("\n\n");
   }
@@ -342,6 +405,18 @@ export class Harness {
     return this.resolveApproval(approvalId, true);
   }
 
+  /** "Allow for this chat": this command runs, and the chat's next commands in writable folders run without asking until Syph restarts. */
+  allowSession(approvalId: string) {
+    const r = this.approvals.get(approvalId);
+    if (!r) return false;
+    if (r.chatId) this.sessionAllowed.add(r.chatId);
+    const ok = this.resolveApproval(approvalId, true);
+    // Other commands of the same chat waiting for an answer go ahead too.
+    for (const [aid, other] of [...this.approvals]) if (other.chatId && other.chatId === r.chatId && other.command && other.writable) this.resolveApproval(aid, true, true);
+    this.broadcast({ type: "chats" });
+    return ok;
+  }
+
   /** YOLO switched on: let every tool that is waiting for an answer run. */
   approveAllPending() {
     for (const id of [...this.approvals.keys()]) this.resolveApproval(id, true, true);
@@ -356,12 +431,29 @@ export class Harness {
         }
         const command = commandOf(tool, args);
         if (command && (this.home.config().approval?.allowCommands ?? []).includes(command)) return resolve(true);
+        // Terminal permissions: commands in the workspace or a folder linked with write access may run
+        // without asking (Settings: auto, or "Allow for this chat"). A read-only folder always asks.
+        const writable = command ? this.commandWritable(chatId, args) : false;
+        if (command && writable) {
+          if ((this.home.config().approval?.terminal ?? "ask") === "auto") return resolve(true);
+          if (chatId && this.sessionAllowed.has(chatId)) return resolve(true);
+        }
         const aid = id("ap_");
-        this.approvals.set(aid, { resolve, emit, chatId, tool, command });
+        this.approvals.set(aid, { resolve, emit, chatId, tool, command, writable });
         emit({ type: "approval_request", id: aid, tool, args, reason });
         signal?.addEventListener("abort", () => this.resolveApproval(aid, false));
         setTimeout(() => this.resolveApproval(aid, false), 30 * 60_000).unref?.();
       });
+  }
+
+  /** Whether a shell call would run in the workspace or a folder linked with write access. */
+  private commandWritable(chatId: string | undefined, args: unknown) {
+    const chat = chatId ? store.getChat(this.home, chatId) : null;
+    try {
+      return commandCwd({ workspace: store.workspaceFor(this.home, chat?.projectId), folders: linkedFolders(this.home, chat) }, (args as { cwd?: string })?.cwd).writable;
+    } catch {
+      return false;
+    }
   }
 
   // ---------- Live chats: each run lives on the server, so any number can run at once ----------
@@ -504,11 +596,13 @@ export class Harness {
     }
   }
 
-  private toolContext(runId: string, opts: { projectId?: string; chatId?: string; approve: ToolContext["approve"]; signal?: AbortSignal; model: string; depth?: number; onPlan?: (steps: PlanStep[]) => void; progressKey?: string; onContract?: (c: Contract) => void }): ToolContext {
+  private toolContext(runId: string, opts: { projectId?: string; chatId?: string; approve: ToolContext["approve"]; signal?: AbortSignal; model: string; depth?: number; onPlan?: (steps: PlanStep[]) => void; progressKey?: string; onContract?: (c: Contract) => void; onTerminal?: (e: TerminalEntry) => void }): ToolContext {
     const key = opts.progressKey;
     const ctxRef: ToolContext = {
       home: this.home,
       workspace: store.workspaceFor(this.home, opts.projectId),
+      folders: linkedFolders(this.home, opts.chatId ? store.getChat(this.home, opts.chatId) : null, opts.projectId),
+      terminal: this.terminal,
       projectId: opts.projectId,
       chatId: opts.chatId,
       runId,
@@ -521,6 +615,7 @@ export class Harness {
       },
       hooks: {
         plan: opts.onPlan,
+        terminal: opts.onTerminal,
         loadTools: (names) => names.forEach((n) => ctxRef.loadedTools?.add(n)),
         contract: key
           ? {
@@ -634,6 +729,7 @@ export class Harness {
     const workspace = store.workspaceFor(this.home, chat.projectId);
     const started = Date.now();
     let snap = snapshot(workspace);
+    let folders: LinkedFolder[] = [];
     const files = new Map<string, FileRef>();
     const trackFiles = (e: Extract<AgentEvent, { type: "tool_result" }>) => {
       if (READ_ONLY_TOOLS.has(e.name)) return;
@@ -644,6 +740,14 @@ export class Harness {
       const next = snapshot(workspace);
       const found = changedFiles(workspace, snap, next);
       snap = next;
+      // Files written in a linked folder (outside the workspace) are found from the call itself.
+      if (e.ok && (e.name === "write_file" || e.name === "edit_file")) {
+        const call = turn.toolCalls!.find((c) => c.id === e.id);
+        const p = String((call?.args as { path?: string } | undefined)?.path ?? "");
+        const abs = p && isAbsolute(p) ? resolve(p) : "";
+        const folder = abs && !within(workspace, abs) ? folderFor(folders, abs) : undefined;
+        if (folder && fileExists(abs)) found.push({ path: abs, name: basename(abs), action: files.get(abs)?.action === "created" || /\(new file\)$/.test(e.result) ? "created" : "modified", size: statSync(abs).size, rel: relative(folder.path, abs).split(sep).join("/") });
+      }
       if (e.name === "shell" || e.name.includes("__")) {
         const call = turn.toolCalls!.find((c) => c.id === e.id);
         found.push(...mentionedFiles(`${JSON.stringify(call?.args ?? "")}\n${e.result}`, started, new Set([...next.keys(), ...files.keys()])));
@@ -700,7 +804,8 @@ export class Harness {
         if (repo && finished.length && this.home.config().agent.gitCheckpoints) checkpoints = checkpoints.then(() => this.checkpoint(repo.path, key, finished.map((s) => s.text).join("; "), relay));
       };
       const approve = opts.approve ?? this.interactiveApprove(relay, opts.signal, chatId);
-      const ctx = this.toolContext(trace.runId, { projectId: chat.projectId, chatId, approve, signal: opts.signal, model, onPlan, progressKey: key, onContract: (c) => relay({ type: "contract", contract: c }) });
+      const ctx = this.toolContext(trace.runId, { projectId: chat.projectId, chatId, approve, signal: opts.signal, model, onPlan, progressKey: key, onContract: (c) => relay({ type: "contract", contract: c }), onTerminal: (entry) => relay({ type: "terminal", entry: { ...entry, output: entry.output.slice(-2000) } }) });
+      folders = ctx.folders ?? [];
       for (const t of chat.loadedTools ?? []) ctx.loadedTools!.add(t);
       const tools = drafting ? this.tools().pick(DRAFT_TOOLS) : this.tools();
       if (coordinator && !drafting) {

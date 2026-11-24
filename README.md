@@ -36,6 +36,12 @@ Every project has a **coordinator**: its main chat, at the top of the project pa
 - **Tasks:** each run of a scheduled task in a project is a coordinator thread, so it reports to the coordinator.
 - Opening a project opens its coordinator chat; the **Settings** button there holds the project's instructions, files, repos, tasks and threads.
 
+### Folders on your computer and the terminal
+
+Click the **folder** button under the message box and **Link a folder…** (Browse opens the Windows folder picker, or paste a path). Choose **Read, write and run commands** or **Only read**, and whether it is for this chat or the whole project. A project's folders (Settings → **Folders on this computer**) reach its coordinator and every thread; a folder linked to the coordinator chat reaches its threads too. Syph then uses full paths in those folders with its file tools. Nothing else on the computer is reachable, Syph's own data folder can't be linked, and a read-only folder can't be changed.
+
+Syph runs terminal commands like Claude Code: PowerShell (or cmd) on Windows, in a linked folder (or its workspace), with long builds, background servers (`command_output`, `stop_command`) and a timeout. Each command shows a card with **Deny**, **Allow for this chat** (until Syph restarts), **Always allow this command** and **Allow once**. **Settings → Approvals → Run terminal commands without asking** lets commands in writable folders run straight away; read-only folders always ask. The **commands** pill at the top of a chat is its command log: every command, where it ran, how it ended and its output, with **Stop** for the ones still running (stopping the reply stops its commands too). YOLO, "Always allow", Task allow-lists and budgets work as before.
+
 ### YOLO mode
 
 By default Syph asks before running shell commands (PowerShell on Windows), creating Tasks or using MCP tools. Click **Ask first** in the chat box to switch to **YOLO on**, or use **Settings → Tool approvals**. With YOLO on, those tools run without asking, and any that are already waiting run straight away. Scheduled Tasks have their own **YOLO for scheduled Tasks** switch, off by default, because nobody is watching them.
@@ -211,7 +217,8 @@ npm run syph -- home
 ## Safety
 
 - The server listens on `127.0.0.1` only.
-- File tools are confined to the project's `files/` folder (or `~/.syph/workspace`).
+- File tools are confined to the project's `files/` folder (or `~/.syph/workspace`) and the folders you linked (read-only ones can't be written). Links and junctions inside a linked folder are followed, so one pointing elsewhere does not open a way out. Syph's own data folder, and folders that contain it, can't be linked.
+- Terminal commands run in the workspace or a linked folder and ask first unless you chose otherwise (Allow for this chat, terminal auto mode for writable folders, Always allow a command, or YOLO). A command can still reach anything your Windows account can, like any terminal, so link only folders you want worked on and read commands before allowing them.
 - `shell` (PowerShell on Windows), `create_task` and MCP tools ask before running in chat unless YOLO mode is on. In unattended Tasks they are declined unless YOLO for scheduled Tasks is on.
 - Syph can never edit its evals, judge or reflector prompts, config, keys, traces or history.
 - The file preview and Open / Show in folder only reach the workspace, project folders and files Syph made. They never reach its keys or config. Previews of web pages run sandboxed.

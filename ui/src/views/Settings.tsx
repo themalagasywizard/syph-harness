@@ -92,7 +92,7 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
     providers: `OpenRouter ${cfg.hasOpenRouterKey ? "key set" : "no key"} · MiniMax ${cfg.hasMiniMaxKey ? "key set" : "no key"} · Ollama · OpenAI-compatible`,
     defaults: `Chat ${shortModel(cfg.defaults.chatModel)} · Tasks ${shortModel(cfg.defaults.taskModel)}`,
     profile: profile ? `${shortModel(profileRef)} · ${profile.strategy} · ${profile.nativeTools ? "native tools" : "text tools"}` : "How Syph runs each model",
-    approvals: `YOLO ${onOff(cfg.approval.yolo)} · YOLO for Tasks ${onOff(cfg.approval.yoloTasks)}`,
+    approvals: `YOLO ${onOff(cfg.approval.yolo)} · Terminal ${cfg.approval.terminal === "auto" ? "auto" : "asks"} · YOLO for Tasks ${onOff(cfg.approval.yoloTasks)}`,
     long: `Long tasks: ${agent.longSteps ? `${agent.longSteps} steps` : "no step cap"}, ${agent.maxUsdPerLongRun ? `$${agent.maxUsdPerLongRun}` : "no spend cap"} · Checkpoints ${onOff(agent.gitCheckpoints)}`,
     budgets: `$${(state.spend.chat ?? 0).toFixed(2)} of $${cfg.budgets.dailyUsd.chat} chat today · Tasks $${cfg.budgets.dailyUsd.tasks} · Evolve $${cfg.budgets.dailyUsd.evolve}`,
     connectors: "Google Workspace, API keys and other apps",
@@ -212,6 +212,10 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
           <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
             <div style={{ minWidth: 0 }}><div className="name">YOLO mode</div><div className="sub wrap">Run {navigator.userAgent.includes("Windows") ? "PowerShell" : "shell"} commands and other ask-first tools in chats without asking. Also lets any tool waiting for you run. You can flip it from the chat box too.</div></div>
             <Toggle on={!!cfg.approval.yolo} onChange={(v) => patch({ approval: { yolo: v } })} label="YOLO mode" />
+          </div>
+          <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
+            <div style={{ minWidth: 0 }}><div className="name">Run terminal commands without asking</div><div className="sub wrap">Commands in your workspace and in folders linked with write access run straight away; you still see each one in the chat's command log and can stop it. Off: Syph asks before each command (you can also allow a whole chat from the question). Read-only folders always ask.</div></div>
+            <Toggle on={cfg.approval.terminal === "auto"} onChange={(v) => patch({ approval: { terminal: v ? "auto" : "ask" } })} label="Run terminal commands without asking" />
           </div>
           <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
             <div style={{ minWidth: 0 }}><div className="name">YOLO for scheduled Tasks</div><div className="sub wrap">Tasks run with nobody watching, so they decline ask-first tools unless this is on.</div></div>

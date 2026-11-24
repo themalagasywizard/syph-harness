@@ -886,3 +886,51 @@ textarea.input.skill-body { min-height: 300px; font-family: var(--mono, ui-monos
 @media (max-width: 900px) { .thread-rail { position: absolute; right: 0; top: 0; bottom: 0; z-index: 20; box-shadow: -8px 0 28px rgba(0,0,0,.25); } }
 
 .proj-settings-sub { display: flex; align-items: center; gap: 6px; }
+
+/* ----- Linked folders ----- */
+.folder-modal { max-width: 560px; }
+.folder-modal > .hint { margin: -8px 0 14px; }
+.folder-path { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 6px 6px 6px 12px; background: var(--surface); color: var(--muted); }
+.folder-path input { flex: 1; min-width: 0; border: 0; background: none; color: var(--text); font: inherit; font-family: var(--mono); font-size: 13px; outline: none; padding: 4px 0; }
+.folder-modal .repo-scope { flex-wrap: wrap; margin-top: 12px; }
+.folder-modal .seg { display: inline-flex; align-items: center; gap: 6px; }
+.folder-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.folder-row { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 10px; padding: 6px 8px 6px 12px; min-width: 0; color: var(--muted); }
+.folder-row.compact { border: 0; padding: 4px 4px 4px 10px; gap: 8px; }
+.folder-row .fr-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.folder-row .fr-name { color: var(--text); display: flex; align-items: center; gap: 6px; }
+.folder-row .fr-path { color: var(--faint); font-size: 11.5px; }
+.folder-row .fr-scope { font-size: 11px; white-space: nowrap; }
+.menu .folder-row button, .folder-row button { width: auto; flex-shrink: 0; }
+.menu .folder-row .icon-btn.sm { width: 30px; min-width: 30px; height: 30px; padding: 0; justify-content: center; color: var(--muted); }
+.fr-access { display: inline-flex !important; align-items: center; gap: 4px; cursor: pointer; background: none; text-transform: none !important; letter-spacing: 0 !important; padding: 2px 7px !important; white-space: nowrap; }
+.fr-access.write { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.fr-access.read { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.kind.bad { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, transparent); }
+.folder-menu { min-width: 400px; max-width: 520px; }
+.folder-btn.connected { color: var(--text); }
+.folder-btn { position: relative; }
+
+/* ----- Terminal: command log and the question for a command ----- */
+.term-pill.busy { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.term-menu { width: min(620px, 92vw); max-height: 70vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.term-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; border-bottom: 1px solid var(--border); }
+.menu .term-head button { width: auto; }
+.term-perm { padding: 8px 12px; font-size: 12.5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+.menu .term-perm .link-btn { width: auto; padding: 0; text-decoration: underline; font-size: 12.5px; }
+.term-list { overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.term-entry { border-radius: 8px; padding: 6px 8px; }
+.term-entry:hover { background: var(--surface-3); }
+.te-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.menu .te-toggle { flex: 1; min-width: 0; padding: 2px 0; gap: 6px; background: none; }
+.menu .te-toggle:hover { background: none; }
+.te-cmd { font-size: 12.5px; color: var(--text); }
+.te-status { font-size: 11.5px; color: var(--muted); white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); }
+.te-status.done { color: var(--ok); }
+.te-status.failed, .te-status.timeout { color: var(--err); }
+.te-status.running { color: var(--warn); }
+.menu .te-stop { width: auto; padding: 2px 8px; gap: 4px; color: var(--err); }
+.te-meta { font-size: 11.5px; padding-left: 20px; display: flex; gap: 4px; min-width: 0; }
+.te-out { margin: 6px 0 2px 20px; max-height: 260px; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
+.cmd-approval .cmd-line { margin: 4px 0; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; white-space: pre-wrap; word-break: break-word; color: var(--text); max-height: 160px; overflow: auto; }
+.cmd-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }

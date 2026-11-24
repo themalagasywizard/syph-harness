@@ -129,6 +129,38 @@ export interface RepoLink {
   connectedAt: string;
 }
 
+export interface FolderLink {
+  path: string;
+  name: string;
+  access: "read" | "write";
+  linkedAt: string;
+  scope: "chat" | "coordinator" | "project";
+  exists: boolean;
+}
+
+export interface TerminalEntry {
+  id: string;
+  chatId?: string;
+  command: string;
+  cwd: string;
+  shell: "powershell" | "cmd" | "sh";
+  background?: boolean;
+  status: "running" | "done" | "failed" | "stopped" | "timeout";
+  exitCode?: number | string;
+  startedAt: string;
+  endedAt?: string;
+  output: string;
+}
+
+export interface TerminalState {
+  entries: TerminalEntry[];
+  /** "Allow for this chat" is on. */
+  session: boolean;
+  mode: "ask" | "auto";
+  yolo: boolean;
+  shell: string;
+}
+
 export interface RepoStatus extends RepoLink {
   scope: "project" | "chat";
   exists: boolean;
@@ -337,7 +369,7 @@ export interface Config {
   providers: { name: string; baseUrl: string; apiKeyEnv?: string }[];
   defaults: { chatModel: string; taskModel: string; reflectorModel: string; judgeModel: string; effort?: Effort };
   budgets: { dailyUsd: { chat: number; tasks: number; evolve: number } };
-  approval: { autoAccept: { memory: boolean; skill: boolean }; yolo?: boolean; yoloTasks?: boolean; allowCommands?: string[]; taskCommands?: string[] };
+  approval: { autoAccept: { memory: boolean; skill: boolean }; yolo?: boolean; yoloTasks?: boolean; allowCommands?: string[]; taskCommands?: string[]; terminal?: "ask" | "auto" };
   agent?: { shortSteps?: number; maxUsdPerRun?: number; maxMinutes?: number; longSteps?: number; longMinutes?: number; maxUsdPerLongRun?: number; reviewAfterErrors?: number; gitCheckpoints?: boolean; lazyTools?: boolean; maxThreads?: number; coordinatorWakesPerHour?: number; threadBriefs?: boolean };
   evolve: { samplesPerCase: number; maxAttempts: number; heldOutFraction: number };
   killSwitch: boolean;
@@ -441,8 +473,20 @@ export async function followChat(chatId: string, onEvent: (e: AgentEvent) => voi
 
 export function subscribe(onEvent: (e: any) => void) {
   const es = new EventSource("/api/events");
-  es.onmessage = (m) => onEvent(JSON.parse(m.data));
+  es.onmessage = (m) => {
+    const e = JSON.parse(m.data);
+    onEvent(e);
+    // Components that need one kind of server event listen here instead of opening their own stream.
+    dispatchEvent(new CustomEvent("syph:server", { detail: e }));
+  };
   return () => es.close();
+}
+
+/** Listen to the app's server events (the stream App opens). */
+export function onServerEvent(fn: (e: any) => void) {
+  const on = (ev: Event) => fn((ev as CustomEvent).detail);
+  addEventListener("syph:server", on);
+  return () => removeEventListener("syph:server", on);
 }
 
 export const modelLabel = (ref?: string) => {

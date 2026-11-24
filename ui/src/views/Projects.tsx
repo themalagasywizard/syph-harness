@@ -17,6 +17,7 @@ import { Toggle } from "../components/Toggle";
 import { FileIcon, FileActions, revealFile } from "../components/FilePreview";
 import { Slot } from "../ext";
 import { ProjectRepos } from "../components/Repos";
+import { ProjectFolders } from "../components/Folders";
 
 export function ProjectsView({ projectId }: { projectId?: string }) {
   const { state, go, refresh } = useApp();
@@ -164,6 +165,7 @@ function ProjectDetailView({ id }: { id: string }) {
           <code title={p.folder}>{p.folder}</code>
           <button className="btn ghost sm" onClick={() => revealFile(p.folder)}>Open folder</button>
         </div>
+        <ProjectFolders projectId={id} />
         <ProjectRepos projectId={id} />
 
         <div className="tabs">
