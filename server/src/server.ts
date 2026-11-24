@@ -282,6 +282,11 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   };
   route("POST", "/api/threads/:id/resolve", (_q, _s, p, body) => ({ ok: true, message: h.threads.resolve(parentOf(p.id), p.id, body?.resolved !== false) }));
   route("POST", "/api/threads/:id/stop", (_q, _s, p) => ({ ok: true, message: h.threads.stop(parentOf(p.id), p.id) }));
+  route("POST", "/api/threads/:id/start-model", (_q, _s, p, body) => {
+    parentOf(p.id);
+    if (!body?.model || typeof body.model !== "string") throw httpError(400, "model is required");
+    return h.threads.startWithModel(p.id, body.model);
+  });
   route("POST", "/api/projects", (_q, _s, _p, body) => store.createProject(home, body));
   route("PUT", "/api/projects/:id", (_q, _s, p, body) => store.updateProject(home, p.id, pick(body ?? {}, ["name", "description", "instructions", "color", "coordinatorWake"]) as any));
   route("DELETE", "/api/projects/:id", (_q, _s, p) => (store.deleteProject(home, p.id), { ok: true }));

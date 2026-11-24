@@ -2,9 +2,11 @@
 // the checks agree (contract card), what it needs from you (question and continue cards), and
 // what actually happened (recap). Everything shown here comes from the harness, not the model.
 import { useEffect, useState } from "react";
-import { AlertTriangle, CircleCheck, CreditCard, ExternalLink, RotateCcw, CircleDashed, CircleX, FileDiff, Flag, HelpCircle, Loader2, PauseCircle, Pencil, Play, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, CircleCheck, Cpu, CreditCard, ExternalLink, RotateCcw, CircleDashed, CircleX, FileDiff, Flag, HelpCircle, Loader2, PauseCircle, Pencil, Play, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { ModelPicker } from "./ModelPicker";
 import { resetsIn, useUsage } from "./UsageBar";
-import { api, type CheckResult, type Contract, type Progress, type Recap, type RunStatus, type StopReason, type Turn } from "../api";
+import { api, modelLabel, type CheckResult, type Contract, type Progress, type Recap, type RunStatus, type StopReason, type Turn, type UserQuestion } from "../api";
+import { useApp } from "../App";
 
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n));
 const money = (usd: number) => (usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`);
@@ -149,8 +151,84 @@ export function ContractCard({ chatId, progress, checks, live, onChanged, onStar
   );
 }
 
-/** The agent asked something it can't find out itself: answer with one tap. */
-export function QuestionCard({ question, onAnswer, disabled }: { question: { question: string; options: string[] }; onAnswer: (a: string) => void; disabled?: boolean }) {
+/** The agent asked something it can't find out itself: answer with one tap, or pick a model when kind === "model". */
+export function QuestionCard({
+  question,
+  onAnswer,
+  onPickModel,
+  disabled,
+}: {
+  question: UserQuestion;
+  onAnswer: (a: string) => void;
+  onPickModel?: (model: string, pendingStart: boolean) => void;
+  disabled?: boolean;
+}) {
+  const { state } = useApp();
+  const initialModel = question.recommendedModel ?? question.options.find((o) => o.includes(":")) ?? state?.config.defaults.chatModel ?? "";
+  const [selected, setSelected] = useState(initialModel);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setSelected(initialModel);
+  }, [initialModel]);
+
+  if (question.kind === "model") {
+    const defaultModel = state?.config.defaults.chatModel;
+    const frontendModel = state?.config.defaults.frontendModel;
+    const quick = [...new Set([...question.options.filter((o) => o.includes(":")), defaultModel, frontendModel].filter((x): x is string => !!x))];
+    const roleHint = (ref: string) => {
+      if (ref === frontendModel) return "Frontend design";
+      if (ref === defaultModel) return "Default · fast";
+      return ref.split(":")[0];
+    };
+    const confirm = async () => {
+      if (!selected || disabled || busy) return;
+      setBusy(true);
+      try {
+        if (onPickModel) await onPickModel(selected, !!question.pendingStart);
+        else onAnswer(selected);
+      } finally {
+        setBusy(false);
+      }
+    };
+    return (
+      <div className="ask-card model-pick">
+        <div className="ask-q">
+          <Cpu size={16} />
+          <span>{question.question}</span>
+        </div>
+        <div className="ask-model-opts">
+          {quick.map((ref) => {
+            const active = selected === ref;
+            return (
+              <button
+                key={ref}
+                type="button"
+                className={`ask-model-opt ${active ? "on" : ""}`}
+                disabled={disabled || busy}
+                onClick={() => setSelected(ref)}
+              >
+                <span className="amo-name">{modelLabel(ref)}</span>
+                <span className="amo-meta">
+                  {roleHint(ref)}
+                  {active && <Check size={12} />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="ask-model-foot">
+          <ModelPicker value={selected} onChange={setSelected} align="left" up={false} />
+          <div className="spacer" />
+          <button type="button" className="btn primary sm" disabled={disabled || busy || !selected} onClick={confirm}>
+            {busy ? <Loader2 size={13} className="spin" /> : <Play size={13} />}
+            <span>{question.pendingStart ? "Start" : "Continue"} with {modelLabel(selected)}</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="ask-card">
       <div className="ask-q"><HelpCircle size={16} /> <span>{question.question}</span></div>

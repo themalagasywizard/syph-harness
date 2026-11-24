@@ -7,7 +7,7 @@ import { BudgetError, complete, type BudgetCategory } from "./providers/llm.ts";
 import { getProfile } from "./providers/models.ts";
 import type { ToolRegistry } from "./tools/registry.ts";
 import type { ToolContext } from "./tools/types.ts";
-import type { AgentEvent, ChatMessage, StopReason, Usage } from "./types.ts";
+import type { AgentEvent, ChatMessage, StopReason, Usage, UserQuestion } from "./types.ts";
 
 export interface AgentRun {
   home: Home;
@@ -40,7 +40,7 @@ export interface AgentResult {
   /** Why the run ended. Anything but "done" means the work may be unfinished. */
   stopReason: StopReason;
   /** What was asked, when the run stopped on a question (ask_user). */
-  question?: { question: string; options: string[] };
+  question?: UserQuestion;
 }
 
 export const emptyUsage = (): Usage => ({ promptTokens: 0, completionTokens: 0, costUsd: 0 });

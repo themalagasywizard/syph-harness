@@ -10,6 +10,14 @@ export interface ToolCallView {
   ms?: number;
 }
 
+export interface UserQuestion {
+  question: string;
+  options: string[];
+  kind?: "choice" | "model";
+  recommendedModel?: string;
+  pendingStart?: boolean;
+}
+
 export interface Turn {
   id: string;
   role: Role;
@@ -22,7 +30,7 @@ export interface Turn {
   plan?: PlanStep[];
   durationMs?: number;
   stopReason?: StopReason;
-  question?: { question: string; options: string[] };
+  question?: UserQuestion;
   checks?: CheckResult[];
   recap?: Recap;
   steering?: string[];
@@ -432,7 +440,7 @@ export type AgentEvent =
   | { type: "contract"; contract: Contract }
   | { type: "checks"; checks: CheckResult[] }
   | { type: "error"; error: string }
-  | { type: "run_end"; runId: string; content: string; status: string; usage: Usage; stopReason?: StopReason; recap?: Recap; question?: { question: string; options: string[] } }
+  | { type: "run_end"; runId: string; content: string; status: string; usage: Usage; stopReason?: StopReason; recap?: Recap; question?: UserQuestion }
   | { type: "step" | "message" };
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {

@@ -239,7 +239,7 @@ interface Approval {
 
 type Answer = boolean | "always" | "session";
 
-function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, startedAt, status, last, settle, busy, onSend, onRetry }: { turn: Turn; chatId?: string; streaming?: boolean; approval?: Approval | null; onApprove?: (allow: Answer) => void; note?: string; startedAt?: number; status?: RunStatus; last?: boolean; settle?: boolean; busy?: boolean; onSend?: (text: string) => void; onRetry?: () => void }) {
+function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, startedAt, status, last, settle, busy, onSend, onPickModel, onRetry }: { turn: Turn; chatId?: string; streaming?: boolean; approval?: Approval | null; onApprove?: (allow: Answer) => void; note?: string; startedAt?: number; status?: RunStatus; last?: boolean; settle?: boolean; busy?: boolean; onSend?: (text: string) => void; onPickModel?: (model: string, pendingStart: boolean) => void | Promise<void>; onRetry?: () => void }) {
   const elapsed = useElapsed(streaming ? startedAt : undefined);
   const running = streaming ? turn.toolCalls?.find((c) => c.ok === undefined) : undefined;
   const [rating, setRating] = useState(turn.rating);
@@ -295,7 +295,7 @@ function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, sta
         {turn.failure?.kind === "credits" && !streaming ? (
           <CreditsCard failure={turn.failure} onRetry={last ? onRetry : undefined} disabled={busy} />
         ) : turn.question && !streaming ? (
-          <QuestionCard question={turn.question} onAnswer={(a) => onSend?.(a)} disabled={!last || busy} />
+          <QuestionCard question={turn.question} onAnswer={(a) => onSend?.(a)} onPickModel={onPickModel} disabled={!last || busy} />
         ) : turn.content ? (
           <Markdown text={turn.content} />
         ) : (
@@ -527,7 +527,8 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
     if (fresh?.running) follow(id);
   };
 
-  const send = async (text = draft) => {
+  const send = async (text = draft, modelOverride?: string) => {
+    const useModel = modelOverride ?? model;
     // While it works, a message steers the run: the agent reads it at its next step.
     if (live && cid) {
       if (!text.trim()) return;
@@ -551,14 +552,14 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
     try {
       const fresh = !id;
       if (!id) {
-        const c = await api.post<Chat>("/chats", { projectId, model });
+        const c = await api.post<Chat>("/chats", { projectId, model: useModel });
         id = c.id;
         setCid(id);
-      } else if (chat && (chat.projectId !== projectId || chat.model !== model)) {
-        await api.patch(`/chats/${id}`, { projectId, model });
+      } else if (chat && (chat.projectId !== projectId || chat.model !== useModel)) {
+        await api.patch(`/chats/${id}`, { projectId, model: useModel });
       }
       setPendingUser({ id: "pending", role: "user", content: text, attachments: files, createdAt: new Date().toISOString() });
-      await sendMessage(id, text, model, { attachments: files.length ? files : undefined });
+      await sendMessage(id, text, useModel, { attachments: files.length ? files : undefined });
       refresh();
       // A new chat gets its own address, so "New chat" starts another one while this keeps running.
       if (fresh) return go({ kind: "chat", chatId: id });
@@ -572,6 +573,24 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
       setAttachments(files);
       setError((e as Error).message);
     }
+  };
+
+  const pickModelForTurn = async (picked: string, pendingStart: boolean) => {
+    setModel(picked);
+    setError(undefined);
+    if (pendingStart && cid) {
+      try {
+        await api.post(`/threads/${cid}/start-model`, { model: picked });
+        const c = await api.get<Chat>(`/chats/${cid}`);
+        setChat(c);
+        refresh();
+        if (c.running) follow(cid);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+      return;
+    }
+    await send(`Use ${modelLabel(picked)} and continue.`, picked);
   };
 
   /** Files dropped, pasted or picked: saved to the chat's uploads/ folder, sent with the next message. */
@@ -778,7 +797,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
                     </div>
                   </div>
                 ) : (
-                  <AssistantTurn key={t.id} turn={t} chatId={chat?.id} last={i === lastAssistant && i > lastUserIdx} settle={settling && i === lastAssistant} busy={!!live} onSend={(m) => send(m)} onRetry={retry} />
+                  <AssistantTurn key={t.id} turn={t} chatId={chat?.id} last={i === lastAssistant && i > lastUserIdx} settle={settling && i === lastAssistant} busy={!!live} onSend={(m) => send(m)} onPickModel={pickModelForTurn} onRetry={retry} />
                 ),
               )}
               {live && <AssistantTurn turn={live} streaming approval={approval} onApprove={answer} note={note} startedAt={liveStart} status={status} />}

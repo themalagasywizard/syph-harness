@@ -105,12 +105,33 @@ test("Coordinator routes frontend threads to Gemini and keeps general work on ch
   });
   home.setEnv("GEMINI_API_KEY", "AIzaSyTestKey0123456789abcdef");
 
-  assert.equal(isFrontendTask("Build restaurant landing page", "Create index.html and CSS"), true);
+  // Strict frontend routing: ONLY when using the frontend-design skill (or frontend: true).
+  // Mere mentions of "website" during research/prospecting/auditing MUST stay on the cheap default model.
+  assert.equal(isFrontendTask("Build restaurant site", "Call read_skill(\"frontend-design\") and build the landing page"), true);
+  assert.equal(isFrontendTask("Research small businesses without websites", "Find 10 French companies that don't have a website or have a bad website"), false);
   assert.equal(isFrontendTask("Analyse Q3 invoices", "Parse CSV and output totals"), false);
 
-  const feRoute = resolveThreadModel(home, "mock:cheap", { title: "Build bakery website", prompt: "Create a landing page" });
-  assert.equal(feRoute.model, GEMINI_DEFAULT);
-  assert.equal(feRoute.routedFrontend, true);
+  const researchRoute = resolveThreadModel(home, "mock:cheap", {
+    title: "Find French companies without websites",
+    prompt: "Research 10 small businesses without a website and export prospects.csv",
+  });
+  assert.equal(researchRoute.model, "mock:cheap");
+  assert.equal(researchRoute.routedFrontend, false);
+
+  const feSkillRoute = resolveThreadModel(home, "mock:cheap", {
+    title: "Build bakery landing page",
+    prompt: "Use the frontend-design skill to build a landing page",
+  });
+  assert.equal(feSkillRoute.model, GEMINI_DEFAULT);
+  assert.equal(feSkillRoute.routedFrontend, true);
+
+  const feFlagRoute = resolveThreadModel(home, "mock:cheap", {
+    title: "Build bakery landing page",
+    prompt: "Build the page",
+    frontend: true,
+  });
+  assert.equal(feFlagRoute.model, GEMINI_DEFAULT);
+  assert.equal(feFlagRoute.routedFrontend, true);
 
   const genRoute = resolveThreadModel(home, "mock:cheap", { title: "Summarize PDF", prompt: "Extract action items" });
   assert.equal(genRoute.model, "mock:cheap");
@@ -163,12 +184,41 @@ test("Coordinator routes frontend threads to Gemini and keeps general work on ch
   }
   await h.threads.settled();
 
-  assert.match(coordSys, /# Frontend thread routing/);
+  assert.match(coordSys, /# Thread model routing/);
   assert.equal(frontendRan, true);
   const threads = store.listThreads(home, coord.id);
   const feThread = threads.find((t) => t.title.includes("landing page"))!;
   const genThread = threads.find((t) => t.title.includes("email"))!;
   assert.equal(feThread.model, "mock:frontend");
   assert.equal(genThread.model, "mock:cheap");
+
+  // Unsure which model to use: ask_model pauses thread with an in-thread model selector, then launches on chosen model.
+  let chosenModelRan = false;
+  mock("chosen", () => {
+    chosenModelRan = true;
+    return reply("Completed on user-selected model.");
+  });
+  const paused = h.threads.start(coord.id, {
+    title: "Mixed research and prototype",
+    prompt: "Do the requested work",
+    ask_model: true,
+    model_reason: "Pick MiniMax for research or Gemini 4 Neon for UI design.",
+  });
+  assert.equal(paused.threadState, "blocked");
+  assert.equal(paused.turns.at(-1)?.question?.kind, "model");
+  assert.equal(paused.turns.at(-1)?.question?.pendingStart, true);
+  assert.equal(chosenModelRan, false);
+
+  h.threads.startWithModel(paused.id, "mock:chosen");
+  for (let i = 0; i < 40; i++) {
+    const t = store.getChat(home, paused.id);
+    if (t?.threadState === "done") break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  await h.threads.settled();
+  assert.equal(chosenModelRan, true);
+  const finished = store.getChat(home, paused.id)!;
+  assert.equal(finished.model, "mock:chosen");
+  assert.equal(finished.turns.at(-1)?.content, "Completed on user-selected model.");
   await h.close();
 });

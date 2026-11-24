@@ -1,7 +1,7 @@
 import type { z } from "zod";
 import type { BrowserBridge } from "../browser.ts";
 import type { Home } from "../home.ts";
-import type { Contract, Proposal, TerminalEntry } from "../types.ts";
+import type { Contract, Proposal, TerminalEntry, UserQuestion } from "../types.ts";
 import type { LinkedFolder } from "../folders.ts";
 import type { Terminal } from "../terminal.ts";
 import type { ProposalInput } from "../evolve/proposals.ts";
@@ -29,8 +29,8 @@ export interface ToolContext {
     runSubagent?: (prompt: string) => Promise<string>;
     /** Show the user the agent's plan for a multi-step task (a live checklist in the chat). */
     plan?: (steps: { text: string; status: "pending" | "in_progress" | "done" }[]) => void;
-    /** End the turn after this step's tools, showing the user a question with answer buttons (set by the loop). */
-    endTurn?: (q: { question: string; options: string[] }) => void;
+    /** End the turn after this step's tools, showing the user a question with answer buttons or a model selector (set by the loop). */
+    endTurn?: (q: UserQuestion) => void;
     /** Read and change the chat's contract (set by Harness). */
     contract?: { get: () => Contract | undefined; set: (c: Contract) => void };
     /** Record progress that must survive compaction and later sessions (set by Harness). */
@@ -68,7 +68,7 @@ export function defineTool<S extends z.ZodType>(t: Tool<S>): Tool<S> {
 
 /** What a coordinator can do with its threads. Each returns text for the model. */
 export interface ThreadHooks {
-  start: (t: { title: string; prompt: string; model?: string; frontend?: boolean; long?: boolean }) => string;
+  start: (t: { title: string; prompt: string; model?: string; frontend?: boolean; ask_model?: boolean; model_reason?: string; long?: boolean }) => string;
   message: (threadId: string, text: string) => string;
   list: () => string;
   read: (threadId: string, lastTurns?: number) => string;

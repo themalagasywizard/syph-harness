@@ -12,12 +12,14 @@ const hooks = (ctx: ToolContext) => {
 export const startThread = defineTool({
   name: "start_thread",
   description:
-    "Start a thread: a separate chat where a fresh agent does one piece of work with all the usual tools. Returns at once with the thread's id; you get an update when it finishes or needs the user. Give a short title (verb first, like \"Fix Safari export button\") and a complete, self-contained prompt: the thread can't see this conversation. Set long for multi-step work that should draft a contract first.",
+    "Start a thread: a separate chat where a fresh agent does one piece of work with all the usual tools. Returns at once with the thread's id; you get an update when it finishes or needs the user. Give a short title (verb first, like \"Fix Safari export button\") and a complete, self-contained prompt: the thread can't see this conversation. Leave frontend omitted so general tasks stay on the cheap default model (MiniMax); set frontend: true ONLY when building/designing a website or UI using the frontend-design skill. If unsure which model fits best, set ask_model: true so the thread opens with an interactive model selector for the user.",
   schema: z.object({
     title: z.string().min(1).max(80),
     prompt: z.string().min(1),
-    model: z.string().optional().describe("Model ref for the thread. Leave out to use the default (or frontend model when frontend: true)."),
-    frontend: z.boolean().optional().describe("Set true for website, landing page, HTML/CSS, or visual UI tasks so Syph routes the thread to the configured frontend model (e.g. Gemini 4 Neon) while keeping other work on the cheap default model."),
+    model: z.string().optional().describe("Explicit model ref for the thread. Leave out to stay on the default model (MiniMax), or set frontend: true only when building UI with the frontend-design skill."),
+    frontend: z.boolean().optional().describe("Set true ONLY when this thread will build or design a website, landing page, or visual UI using the frontend-design skill (routes to Gemini 4 Neon). Keep false/omitted for research, prospecting, auditing websites, emails, scripts, or general work so they stay on MiniMax."),
+    ask_model: z.boolean().optional().describe("Set true when unsure which model should run this thread. Opens the thread paused with an interactive model selector so the user picks the model before it runs."),
+    model_reason: z.string().max(260).optional().describe("Short explanation shown in the thread's model selector when ask_model is true."),
     long: z.boolean().optional().describe("Long task: the thread drafts a contract for the user to approve before it starts."),
   }),
   permission: "auto",

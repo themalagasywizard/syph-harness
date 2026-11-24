@@ -814,7 +814,10 @@ export class Harness {
       const feModel = this.home.config().defaults.frontendModel?.trim();
       const coordRoutingNote =
         coordinator && feModel
-          ? `# Frontend thread routing (token-efficient)\n- For any website, landing page, HTML/CSS, or visual UI task, call \`start_thread(..., frontend: true)\` so Syph automatically routes that worker to \`${feModel}\` while keeping coordination and non-UI work on the fast default model.\n- In a frontend thread prompt, instruct the worker to call \`read_skill("frontend-design")\` once, generate only 3–5 studio images with \`generate_image\` if available, and write complete files cleanly in one pass per file.`
+          ? `# Thread model routing (strict)
+- Default: leave \`frontend\` omitted so ALL general tasks (company research, prospecting, auditing existing websites, scraping, emails, scripts, data work, general coding) stay on the cheap default model (\`${model}\`).
+- Frontend design ONLY: set \`frontend: true\` ONLY when the worker thread will actually build or design a website, landing page, or visual UI using the \`frontend-design\` skill — this routes the thread to \`${feModel}\`. In that prompt, tell the worker to call \`read_skill("frontend-design")\` once and generate 3–5 studio images with \`generate_image\` if available.
+- Unsure which model fits best? Set \`ask_model: true\` (with a short \`model_reason\`) on \`start_thread\` so Syph opens the thread with an interactive model selector for the user to pick the model before it starts.`
           : "";
       const system = buildSystemPrompt(this.home, { model, projectId: chat.projectId, query: text, connectors: await this.appPrompt(chat.projectId, chat), extra: [coordinator ? COORDINATOR_PROMPT : "", coordRoutingNote, chat.role === "thread" ? THREAD_PROMPT : "", progressPrompt(readProgress(this.home, key)), drafting ? DRAFT_PROMPT : ""].filter(Boolean).join("\n\n") });
       const repo = activeRepo(this.home, chat, chat.projectId);

@@ -29,6 +29,15 @@ export interface Usage {
   cachedTokens?: number;
 }
 
+/** A question shown to the user via ask_user or a coordinator model-choice prompt. */
+export interface UserQuestion {
+  question: string;
+  options: string[];
+  kind?: "choice" | "model";
+  recommendedModel?: string;
+  pendingStart?: boolean;
+}
+
 /** Why a run ended. "done": the model finished. The rest mean the work may be unfinished. */
 export type StopReason = "done" | "budget" | "repeated_error" | "question" | "checks_failed";
 
@@ -51,7 +60,7 @@ export type AgentEvent =
   | { type: "checks"; checks: CheckResult[] }
   | { type: "terminal"; entry: TerminalEntry }
   | { type: "error"; error: string }
-  | { type: "run_end"; runId: string; content: string; usage: Usage; status: "ok" | "error" | "cancelled"; stopReason?: StopReason; recap?: Recap; question?: { question: string; options: string[] } };
+  | { type: "run_end"; runId: string; content: string; usage: Usage; status: "ok" | "error" | "cancelled"; stopReason?: StopReason; recap?: Recap; question?: UserQuestion };
 
 /** A terminal command the agent ran, for the chat's command log. */
 export interface TerminalEntry {
@@ -313,8 +322,8 @@ export interface Turn {
   durationMs?: number;
   /** Why the run ended, when it wasn't simply finished. */
   stopReason?: StopReason;
-  /** A question the agent asked with ask_user, with answer buttons. */
-  question?: { question: string; options: string[] };
+  /** A question the agent asked with ask_user, with answer buttons or a model selector. */
+  question?: UserQuestion;
   /** Done-when checks the harness ran at the end. */
   checks?: CheckResult[];
   /** Facts about the run for the end-of-turn recap. */

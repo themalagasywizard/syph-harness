@@ -120,12 +120,24 @@ export const noteProgressTool = defineTool({
 export const askUserTool = defineTool({
   name: "ask_user",
   description:
-    "Ask the user a question you can't answer yourself (a decision, a missing fact, a choice between approaches), with 2-4 short answer options they can tap. Your turn ends after this call; their answer comes as the next message. Don't use it for things you can find out with your tools.",
-  schema: z.object({ question: z.string().min(3).max(400), options: z.array(z.string().min(1).max(80)).min(2).max(4) }),
+    "Ask the user a question you can't answer yourself (a decision, a missing fact, a choice between approaches, or which model to use), with 2-4 short answer options they can tap — or set pick_model: true to show an interactive model selector right in the chat/thread. Your turn ends after this call; their answer comes as the next message. Don't use it for things you can find out with your tools.",
+  schema: z.object({
+    question: z.string().min(3).max(400),
+    options: z.array(z.string().min(1).max(80)).max(4).optional(),
+    pick_model: z.boolean().optional().describe("Show an interactive model selector so the user can choose which model should continue this chat/thread."),
+  }),
   permission: "auto",
-  run: ({ question, options }, ctx) => {
+  run: ({ question, options, pick_model }, ctx) => {
     if (!ctx.hooks.endTurn) return "Error: you can't ask the user from here. Decide yourself and say what you assumed.";
-    ctx.hooks.endTurn({ question, options });
+    if (pick_model) {
+      const cfg = ctx.home.config();
+      const suggested = [...new Set([cfg.defaults.chatModel, cfg.defaults.frontendModel, ...(options ?? [])].filter((x): x is string => !!x && x.includes(":")))];
+      ctx.hooks.endTurn({ question, options: suggested, kind: "model", recommendedModel: cfg.defaults.chatModel });
+      return "Asked the user to choose a model. Stop now: their selection arrives as the next step.";
+    }
+    const opts = (options ?? []).filter(Boolean);
+    if (opts.length < 2) return "Error: provide 2-4 options (or set pick_model: true for a model selector).";
+    ctx.hooks.endTurn({ question, options: opts });
     return "Asked the user. Stop now: their answer arrives as the next message.";
   },
 });
