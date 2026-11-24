@@ -828,8 +828,9 @@ export class Harness {
     this.broadcast({ type: "task", task: store.patchTask(this.home, taskId, { lastStatus: "running" }) });
     // Every run of a task shares one progress file, so the next run resumes instead of starting cold.
     // A task can run as a thread of its project's coordinator, which then reports on each run.
-    const coord = task.viaCoordinator && task.projectId && store.getProject(this.home, task.projectId) ? store.getOrCreateCoordinator(this.home, task.projectId) : null;
-    const chat = store.createChat(this.home, { projectId: task.projectId, title: coord ? task.name : `${task.name} · ${new Date().toLocaleString()}`, model: task.model ?? this.home.config().defaults.taskModel, progressKey: `task-${task.id}`, ...(coord ? { role: "thread" as const, parentId: coord.id, threadState: "working" as const } : {}) });
+    // In a project every run is a thread of the coordinator, which reports on it.
+    const inProject = !!task.projectId && !!store.getProject(this.home, task.projectId);
+    const chat = store.createChat(this.home, { projectId: task.projectId, title: inProject ? task.name : `${task.name} · ${new Date().toLocaleString()}`, model: task.model ?? this.home.config().defaults.taskModel, progressKey: `task-${task.id}`, ...(inProject ? { threadState: "working" as const, origin: "task" as const } : {}) });
     // The tools an earlier run loaded (for example a connector's write tool) are there from the start.
     const prev = task.lastChatId ? store.getChat(this.home, task.lastChatId) : null;
     if (prev?.loadedTools?.length) store.saveChat(this.home, { ...chat, loadedTools: prev.loadedTools });

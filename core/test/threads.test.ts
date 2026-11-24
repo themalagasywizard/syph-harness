@@ -248,3 +248,34 @@ test("threads that finish together share one wake-up", async () => {
   assert.equal(c.turns.filter((x) => x.auto).length, 1);
   await h.close();
 });
+
+test("every chat in a project is a thread, including ones from before threads", async () => {
+  const home = tempHome({ agent: { threadBriefs: false } });
+  const project = store.createProject(home, { name: "Old" });
+  // A project chat saved before threads existed.
+  const old = store.createChat(home, {});
+  store.saveChat(home, { ...store.getChat(home, old.id)!, projectId: project.id });
+  const h = await new Harness(home).init({ mcp: false });
+  const coord = store.getOrCreateCoordinator(home, project.id);
+  const migrated = store.getChat(home, old.id)!;
+  assert.equal(migrated.role, "thread");
+  assert.equal(migrated.parentId, coord.id);
+  assert.equal(migrated.origin, "user");
+
+  // A new chat opened in the project is a thread too. The user follows it, so no card and no wake-up, just a note.
+  mock("main", (req) => reply(isCoordinator(req) ? "coord" : "Here's the answer."));
+  const fresh = store.createChat(home, { projectId: project.id });
+  assert.equal(fresh.role, "thread");
+  assert.equal(fresh.parentId, coord.id);
+  h.startChat(fresh.id, "a question");
+  await until(() => !h.isLive(fresh.id));
+  await h.threads.settled();
+  assert.equal(store.getChat(home, fresh.id)!.threadState, "done");
+  const c = store.getChat(home, coord.id)!;
+  assert.equal(c.turns.length, 0);
+  assert.equal(c.pendingNotes?.length, 1);
+  assert.equal(store.listThreads(home, coord.id).length, 2);
+  // Chats outside projects stay plain.
+  assert.equal(store.createChat(home, {}).role, undefined);
+  await h.close();
+});

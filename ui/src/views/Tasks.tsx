@@ -210,12 +210,7 @@ function TaskModal({ task, close, saved }: { task: Partial<Task>; close: () => v
             <ModelPicker value={t.model ?? state?.config.defaults.taskModel} onChange={(m) => set("model", m)} compact={false} up={false} align="left" />
           </div>
         </div>
-        {t.projectId && (
-          <div className="field" style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-            <Toggle on={!!t.viaCoordinator} onChange={(v) => set("viaCoordinator", v)} label="Run as a coordinator thread" />
-            <span className="hint">Run each time as a thread of the project's coordinator, which posts a short summary when it ends.</span>
-          </div>
-        )}
+        {t.projectId && <p className="hint" style={{ marginTop: -4 }}>Each run is a thread of the project's coordinator, which posts a short summary when it ends.</p>}
         {err && <div className="error-text">{err}</div>}
         <div className="modal-foot">
           {task.id && (

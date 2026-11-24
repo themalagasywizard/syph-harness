@@ -89,7 +89,7 @@ function NewProject({ close, created }: { close: () => void; created: (p: Projec
 function ProjectDetailView({ id }: { id: string }) {
   const { go, refresh, tick, state, showFile } = useApp();
   const [p, setP] = useState<ProjectDetail | null>(null);
-  const [tab, setTab] = useState<"threads" | "chats" | "instructions" | "files" | "tasks">("threads");
+  const [tab, setTab] = useState<"threads" | "instructions" | "files" | "tasks">("threads");
   const threads = useProjectThreads(id);
   const [instructions, setInstructions] = useState("");
   const [saved, setSaved] = useState(false);
@@ -140,7 +140,7 @@ function ProjectDetailView({ id }: { id: string }) {
           <div className="spacer" />
           <Slot name="project.header" ctx={{ projectId: id }} variant="btn" />
           <button className="icon-btn" onClick={remove} aria-label="Delete project"><Trash2 size={18} /></button>
-          <button className="btn ghost" onClick={() => go({ kind: "chat", projectId: id })} title="A plain chat in this project, without the coordinator"><Plus size={18} /> Chat</button>
+          <button className="btn ghost" onClick={() => go({ kind: "chat", projectId: id })} title="Start a thread yourself: a chat in this project that the coordinator can see"><Plus size={18} /> New thread</button>
           <button className="btn primary" onClick={openCoordinator}><MessageSquare size={18} /> Open chat</button>
         </div>
 
@@ -167,8 +167,8 @@ function ProjectDetailView({ id }: { id: string }) {
         <ProjectRepos projectId={id} />
 
         <div className="tabs">
-          {(["threads", "chats", "instructions", "files", "tasks"] as const).map((t) => (
-            <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>{t === "chats" ? "Other chats" : t[0].toUpperCase() + t.slice(1)}{t === "threads" && active.length ? ` (${active.length})` : ""}</button>
+          {(["threads", "instructions", "files", "tasks"] as const).map((t) => (
+            <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}{t === "threads" && active.length ? ` (${active.length})` : ""}</button>
           ))}
         </div>
 
@@ -182,18 +182,6 @@ function ProjectDetailView({ id }: { id: string }) {
                 <StateBadge state={t.threadState} live={t.status} />
                 <span className="sub">{usd(t.costUsd)}</span>
                 <span className="sub">{relTime(t.updatedAt)}</span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {tab === "chats" && (
-          <div className="list">
-            {p.chats.length === 0 && <div className="empty">No other chats. Plain chats in this project, outside the coordinator, show up here.</div>}
-            {p.chats.map((c) => (
-              <button key={c.id} className="row" style={{ gridTemplateColumns: "1fr auto", width: "100%", textAlign: "left" }} onClick={() => go({ kind: "chat", chatId: c.id })}>
-                <span className="name ellipsis">{c.title}</span>
-                <span className="sub">{relTime(c.updatedAt)}</span>
               </button>
             ))}
           </div>

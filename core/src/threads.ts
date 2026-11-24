@@ -83,9 +83,11 @@ export class Threads {
     return p;
   }
 
-  /** After a restart nothing is running: threads that were working are stopped, queued ones wait for a slot. */
+  /** After a restart nothing is running: threads that were working are stopped, queued ones wait for a slot.
+   *  Project chats from before threads become threads of their project's coordinator. */
   recover() {
     for (const c of store.listChats(this.home)) {
+      if (!c.role && c.projectId && store.getProject(this.home, c.projectId)) store.adoptIntoProject(this.home, c.id, c.projectId);
       if (c.role !== "thread") continue;
       if (c.threadState === "working") store.patchChat(this.home, c.id, (x) => void (x.threadState = "stopped"));
     }
@@ -100,7 +102,7 @@ export class Threads {
     if (!coord || coord.role !== "coordinator") throw new Error("Only a coordinator chat can start threads.");
     const title = t.title.replace(/\s+/g, " ").trim().slice(0, 80) || "Thread";
     const model = t.model ?? coord.model;
-    const chat = store.createChat(this.home, { projectId: coord.projectId, title, model, role: "thread", parentId: coordinatorId, threadState: "queued" });
+    const chat = store.createChat(this.home, { projectId: coord.projectId, title, model, role: "thread", parentId: coordinatorId, threadState: "queued", origin: "coordinator" });
     const start = { prompt: t.prompt, ...(model ? { model } : {}), ...(t.long ? { mode: "long" as const } : {}) };
     store.patchChat(this.home, chat.id, (c) => void (c.queuedStart = start));
     this.drain();
@@ -269,7 +271,8 @@ export class Threads {
     const facts: Partial<ThreadUpdate> = { recap: turn?.recap, costUsd: usage, filesChanged: turn?.recap?.filesChanged ?? turn?.files?.length ?? 0, ...(needs ? { needs } : {}) };
     this.track(
       (async () => {
-        const brief = state === "stopped" || !turn ? null : await this.brief(chat, turn, state).catch(() => null);
+        // A chat the user is having themselves needs no brief: they read the answer as it comes.
+        const brief = state === "stopped" || !turn || chat.origin === "user" ? null : await this.brief(chat, turn, state).catch(() => null);
         this.post(chatId, { state, summary: brief ?? (needs && state === "blocked" ? needs : base), ...facts }, { wake: state === "done" || state === "review_ready" || state === "failed" });
       })(),
     );
@@ -305,12 +308,14 @@ export class Threads {
     store.patchChat(this.home, threadId, (c) => void (c.summary = u.summary));
     const turn: Turn = { id: id("tu_"), role: "assistant", content: u.summary, threadUpdate: update, createdAt: now() };
     const note = `Thread update (from Syph, not the user): thread ${threadId} "${t.title}" is now ${u.state}. ${u.summary}${u.needs && u.needs !== u.summary ? ` Needs: ${u.needs}` : ""}${u.filesChanged ? ` Files changed: ${u.filesChanged}.` : ""}${u.costUsd ? ` Cost so far: ${money(u.costUsd)}.` : ""}`;
+    // A thread the user started by opening a chat is theirs to follow: the coordinator only gets a note.
+    const quiet = t.origin === "user";
     const coord = store.patchChat(this.home, t.parentId, (c) => {
-      c.turns.push(turn);
+      if (!quiet) c.turns.push(turn);
       if (opts.note !== false) c.pendingNotes = [...(c.pendingNotes ?? []), note];
     });
     this.host.changed(t.parentId);
-    if (coord && opts.wake) this.maybeWake(coord);
+    if (coord && opts.wake && !quiet) this.maybeWake(coord);
   }
 
   /** Wake the coordinator so it can react, within the hourly cap (the loop guard between agents). */

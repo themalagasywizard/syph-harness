@@ -60,7 +60,7 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
     const cfg = home.config();
     return {
       config: { ...cfg, hasOpenRouterKey: !!home.env("OPENROUTER_API_KEY"), hasMiniMaxKey: !!home.env("MINIMAX_API_KEY") },
-      projects: store.listProjects(home).map((p) => ({ ...p, folder: store.workspaceFor(home, p.id), chatCount: store.listChats(home).filter((c) => c.projectId === p.id && !c.role).length, taskCount: store.listTasks(home).filter((t) => t.projectId === p.id).length })),
+      projects: store.listProjects(home).map((p) => ({ ...p, folder: store.workspaceFor(home, p.id), chatCount: store.listChats(home).filter((c) => c.projectId === p.id && c.role === "thread").length, taskCount: store.listTasks(home).filter((t) => t.projectId === p.id).length })),
       chats: (() => {
         const live = h.liveChats();
         return store.listChats(home).map((c) => (live[c.id] ? { ...c, status: live[c.id] } : c));
@@ -213,9 +213,10 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
   route("PATCH", "/api/chats/:id", (_q, _s, p, body) => {
     const c = store.getChat(home, p.id);
     if (!c) throw httpError(404, "No such chat");
-    // A coordinator and its threads belong to their project for good.
-    Object.assign(c, pick(body, c.role ? ["title", "model"] : ["title", "projectId", "model"]));
+    // A coordinator and its threads belong to their project for good; a chat moved into a project becomes a thread there.
+    Object.assign(c, pick(body, c.role ? ["title", "model"] : ["title", "model"]));
     store.saveChat(home, c);
+    if (!c.role && body?.projectId && store.getProject(home, String(body.projectId))) store.adoptIntoProject(home, c.id, String(body.projectId));
     return { ok: true };
   });
   route("DELETE", "/api/chats/:id", (_q, _s, p) => (h.stopChat(p.id), store.deleteChat(home, p.id), { ok: true }));

@@ -32,8 +32,9 @@ Every project has a **coordinator**: its main chat, at the top of the project pa
 - **Update cards:** when a thread finishes or needs you, a short card appears in the coordinator chat. The summary comes from what Syph saw the thread do (files changed, checks run), plus a one-line brief. The coordinator then follows up: it reads the thread and tells you the outcome, or starts the next step. Turn this off per project (**Follow up on finished threads**); Settings caps it per hour so two agents can't ping each other forever.
 - **Same rules everywhere:** a thread is an ordinary chat, so budgets, step and time caps, approvals, contracts, git checkpoints and Evolve reviews all apply. Approvals and questions stay in the thread; the coordinator points you there but can't approve for you. Threads can't start threads.
 - **Limits:** at most 3 threads run at once by default (Settings → Long tasks); more wait in a queue.
-- **Tasks:** a scheduled task in a project can **run as a coordinator thread**, so each run reports to the coordinator.
-- Plain chats in a project still work and are listed under **Other chats**.
+- **Every chat in a project is a thread**, including chats from before threads existed. A chat you open yourself (**New thread** in the project settings, or a new chat with the project picked) shows in the rail and the coordinator is told how it ended, without a card or a follow-up.
+- **Tasks:** each run of a scheduled task in a project is a coordinator thread, so it reports to the coordinator.
+- Opening a project opens its coordinator chat; the **Settings** button there holds the project's instructions, files, repos, tasks and threads.
 
 ### YOLO mode
 

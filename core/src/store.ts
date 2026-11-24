@@ -111,7 +111,11 @@ function snippetAround(text: string, word: string, span = 90): string {
 export const getChat = (home: Home, cid: string) => readJson<ChatRecord | null>(home.path("chats", `${cid}.json`), null);
 export const saveChat = (home: Home, c: ChatRecord) => writeJson(home.path("chats", `${c.id}.json`), { ...c, updatedAt: now() });
 
-export function createChat(home: Home, input: { projectId?: string; title?: string; model?: string; progressKey?: string; role?: ChatRecord["role"]; parentId?: string; threadState?: ChatRecord["threadState"] }): ChatRecord {
+export function createChat(home: Home, input: { projectId?: string; title?: string; model?: string; progressKey?: string; role?: ChatRecord["role"]; parentId?: string; threadState?: ChatRecord["threadState"]; origin?: ChatRecord["origin"] }): ChatRecord {
+  // Every chat in a project is a thread of the project's coordinator.
+  if (input.projectId && !input.role && getProject(home, input.projectId)) {
+    input = { ...input, role: "thread", parentId: getOrCreateCoordinator(home, input.projectId).id, origin: input.origin ?? "user" };
+  }
   const c: ChatRecord = {
     id: id("c_"),
     title: input.title ?? "New chat",
@@ -125,6 +129,7 @@ export function createChat(home: Home, input: { projectId?: string; title?: stri
     ...(input.role ? { role: input.role } : {}),
     ...(input.parentId ? { parentId: input.parentId } : {}),
     ...(input.threadState ? { threadState: input.threadState } : {}),
+    ...(input.role === "thread" && input.origin ? { origin: input.origin } : {}),
   };
   saveChat(home, c);
   return c;
@@ -157,6 +162,19 @@ export function getOrCreateCoordinator(home: Home, pid: string): ChatRecord {
 }
 
 export type ThreadSummary = Omit<ChatRecord, "history" | "turns" | "pendingNotes" | "wakes"> & { costUsd: number; lastAnswer?: string };
+
+/** Make a plain chat a thread of a project's coordinator (a chat moved into a project, or one from before threads). */
+export function adoptIntoProject(home: Home, cid: string, pid: string) {
+  const coord = getOrCreateCoordinator(home, pid);
+  return patchChat(home, cid, (c) => {
+    if (c.role) return;
+    c.projectId = pid;
+    c.role = "thread";
+    c.parentId = coord.id;
+    c.origin = c.origin ?? "user";
+    c.threadState = c.threadState ?? "done";
+  });
+}
 
 /** A coordinator's threads, newest first. */
 export function listThreads(home: Home, coordinatorId: string): ThreadSummary[] {

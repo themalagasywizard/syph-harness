@@ -172,6 +172,8 @@ export interface ChatSummary {
   /** "coordinator": a project's main chat. "thread": a chat the coordinator started. */
   role?: "coordinator" | "thread";
   parentId?: string;
+  /** Who started a thread: the coordinator, a scheduled task, or you (a chat opened in the project). */
+  origin?: "coordinator" | "user" | "task";
   threadState?: ThreadState;
   summary?: string;
   resolved?: boolean;

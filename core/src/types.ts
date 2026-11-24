@@ -240,8 +240,10 @@ export interface ChatRecord {
   loadedTools?: string[];
   /** "coordinator": a project's main chat, with the thread tools. "thread": a chat it started. */
   role?: "coordinator" | "thread";
-  /** For a thread: the coordinator chat that started it. */
+  /** For a thread: the project's coordinator chat it belongs to. */
   parentId?: string;
+  /** For a thread: who started it. The coordinator ("coordinator"), a scheduled task ("task"), or the user opening a chat in the project ("user"). */
+  origin?: "coordinator" | "user" | "task";
   threadState?: ThreadState;
   /** For a thread: the last summary posted to the coordinator. */
   summary?: string;
