@@ -1,0 +1,31 @@
+# Compile check for the iPhone app on a Mac runner: builds for the Simulator without signing.
+name: iOS build
+
+on:
+  push:
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  pull_request:
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pick the newest Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          echo "Using $XC"
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+      - name: Build for the Simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/Syph.xcodeproj -target Syph -sdk iphonesimulator -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ONLY_ACTIVE_ARCH=YES build 2>&1 | tee build.log | grep -E "error:|warning: .*(deprecated|never)|BUILD" || true
+          grep -q "BUILD SUCCEEDED" build.log
+      - name: Show errors
+        if: failure()
+        run: grep -E "error:" build.log | sort -u | head -100 || true
