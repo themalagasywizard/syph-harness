@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, AtSign, Plus, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, Clock, Code2, Copy, CornerDownRight, Files, Flag, FlaskConical, FolderClosed, Image as ImageIcon, Lightbulb, LayoutTemplate, ListChecks, Loader2, Moon, Paperclip, Pencil, RotateCcw, ShieldQuestion, Slash, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Wrench, X, Zap } from "lucide-react";
+import { ArrowUp, AtSign, Plus, Settings, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, Clock, Code2, Copy, CornerDownRight, Files, Flag, FlaskConical, FolderClosed, Image as ImageIcon, Lightbulb, LayoutTemplate, ListChecks, Loader2, Moon, Paperclip, Pencil, RotateCcw, ShieldQuestion, Slash, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Wrench, X, Zap } from "lucide-react";
 import { Markdown } from "../components/Markdown";
 import { Mark } from "../components/Logo";
 import { CellLoader } from "../components/CellLoader";
 import { ModelPicker } from "../components/ModelPicker";
+import { UsageBar } from "../components/UsageBar";
 import { useApp } from "../App";
 import { api, followChat, modelLabel, queueMessage, sendMessage, uploadAttachment, type AgentEvent, type Attachment, type Chat, type CheckResult, type FileRef, type PlanStep, type Progress, type Proposal, type RunStatus, type ToolCallView, type Turn } from "../api";
-import { ContractCard, EditDiff, QuestionCard, RecapLine, StatusLine, StopCard } from "../components/RunCards";
+import { ContractCard, CreditsCard, EditDiff, QuestionCard, RecapLine, StatusLine, StopCard } from "../components/RunCards";
 import { ActiveRepoChip, RepoComposerMenu, useOutside } from "../components/Repos";
 import { FileCard, FileIcon } from "../components/FilePreview";
 import { ExtIcon, Slot, type UiExtension } from "../ext";
+import { AutoTurnLine, ThreadCrumb, ThreadRail, ThreadUpdateCard, useProjectThreads } from "../components/Threads";
 
 const suggestions = [
   { text: "Turn what we did today into a reusable skill", icon: <Lightbulb size={18} /> },
@@ -281,7 +283,9 @@ function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, sta
             {turn.steering.map((t, i) => <div key={i} className="steer"><CornerDownRight size={13} /> <span>You, while it worked: {t}</span></div>)}
           </div>
         )}
-        {turn.question && !streaming ? (
+        {turn.failure?.kind === "credits" && !streaming ? (
+          <CreditsCard failure={turn.failure} onRetry={last ? onRetry : undefined} disabled={busy} />
+        ) : turn.question && !streaming ? (
           <QuestionCard question={turn.question} onAnswer={(a) => onSend?.(a)} disabled={!last || busy} />
         ) : turn.content ? (
           <Markdown text={turn.content} />
@@ -298,7 +302,7 @@ function AssistantTurn({ turn, chatId, streaming, approval, onApprove, note, sta
             <button className="icon-btn sm" aria-label="Bad response" onClick={() => rate("down")} style={rating === "down" ? { color: "var(--text)" } : undefined}><ThumbsDown size={16} fill={rating === "down" ? "currentColor" : "none"} /></button>
             <button className="icon-btn sm" aria-label="Copy" onClick={() => { navigator.clipboard.writeText(turn.content); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? <Check size={16} /> : <Copy size={16} />}</button>
             {turn.runId && rating && feedback !== "open" && feedback !== "saved" && <button className="icon-btn sm" title="Turn into eval case" onClick={() => setFeedback("open")}><FlaskConical size={16} /></button>}
-            {last && onRetry && !busy && <button className="icon-btn sm" aria-label="Retry" title="Send the last message again" onClick={onRetry}><RotateCcw size={16} /></button>}
+            {last && onRetry && !busy && !turn.failure && <button className="icon-btn sm" aria-label="Retry" title="Send the last message again" onClick={onRetry}><RotateCcw size={16} /></button>}
             {turn.model && <span className="model-tag">{turn.model.replace(/^openrouter:/, "")}</span>}
           </div>
         )}
@@ -327,6 +331,8 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const [live, setLive] = useState<Turn | null>(null);
   /** When a reply has just finished, its logo springs back into shape instead of appearing still. */
   const [settling, setSettling] = useState(false);
+  /** Bumped when a reply ends, so the usage bar re-reads what is left. */
+  const [usageBump, setUsageBump] = useState(0);
   useEffect(() => {
     if (!settling) return;
     const id = setTimeout(() => setSettling(false), 2500);
@@ -357,6 +363,25 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const textarea = useRef<HTMLTextAreaElement>(null);
   const project = state?.projects.find((p) => p.id === projectId);
   const yolo = !!state?.config.approval.yolo;
+  const role = chat?.role;
+  const [railOpen, setRailOpenState] = useState(() => {
+    try {
+      return localStorage.getItem("syph.threadRail") !== "closed";
+    } catch {
+      return true;
+    }
+  });
+  const setRailOpen = (o: boolean) => {
+    setRailOpenState(o);
+    try {
+      localStorage.setItem("syph.threadRail", o ? "open" : "closed");
+    } catch {
+      /* private mode */
+    }
+  };
+  const threadData = useProjectThreads(role === "coordinator" ? projectId : undefined);
+  const threadById = new Map((threadData?.threads ?? []).map((t) => [t.id, t]));
+  const summary = state?.chats.find((c) => c.id === cid);
 
   useEffect(() => () => watchRef.current?.abort(), []);
   useEffect(() => {
@@ -393,6 +418,26 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
     if (!cid || live || !chat?.turns.some((t) => t.review?.status === "running")) return;
     api.get<Chat>(`/chats/${cid}`).then((c) => !c.running && setChat(c)).catch(() => {});
   }, [tick]);
+
+  // Syph writes to coordinators and threads on its own (update cards, wake-ups, messages from the
+  // coordinator): pick those up, and follow a run that started without this window.
+  const seenUpdate = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!cid || !role || !summary || watchRef.current || pendingUser) return;
+    if (summary.status && !live) {
+      follow(cid);
+      return;
+    }
+    if (live || summary.updatedAt === seenUpdate.current) return;
+    seenUpdate.current = summary.updatedAt;
+    if (chat && summary.updatedAt === chat.updatedAt) return;
+    api.get<Chat>(`/chats/${cid}`).then((c) => {
+      if (watchRef.current) return;
+      setChat(c);
+      setProgress(c.progress);
+      if (c.running) follow(cid);
+    }).catch(() => {});
+  }, [summary?.updatedAt, summary?.status, role]);
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
@@ -461,6 +506,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
       setProgress(fresh.progress);
     }
     setLive(null);
+    setUsageBump((n) => n + 1);
     setSettling(wrote);
     setStatus(undefined);
     setQueued([]);
@@ -595,8 +641,8 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   };
 
   const turns = [...(chat?.turns ?? []), ...(pendingUser ? [pendingUser] : [])];
-  const lastAssistant = turns.findLastIndex((t) => t.role === "assistant");
-  const lastUserIdx = turns.findLastIndex((t) => t.role === "user");
+  const lastAssistant = turns.findLastIndex((t) => t.role === "assistant" && !t.threadUpdate);
+  const lastUserIdx = turns.findLastIndex((t) => t.role === "user" && !t.auto);
   const lastChecks = liveChecks ?? turns.findLast((t) => t.checks?.length)?.checks;
   const retry = () => {
     const u = turns[lastUserIdx];
@@ -608,11 +654,17 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
   const noKey = state && !state.config.hasOpenRouterKey && (model ?? "").startsWith("openrouter:");
   const noMiniMaxKey = state && !state.config.hasMiniMaxKey && (model ?? "").startsWith("minimax:");
 
-  return (
+  const body = (
     <>
       <div className="topbar">
-        <span className="title ellipsis">{chat?.title && chat.title !== "New chat" ? chat.title : ""}</span>
+        {role === "thread" && chat?.parentId && <ThreadCrumb parentId={chat.parentId} projectName={project?.name} state={chat.threadState} live={summary?.status} />}
+        <span className="title ellipsis">{role === "coordinator" ? <>{project?.name ?? chat?.title} <span className="hint coord-tag">Coordinator</span></> : chat?.title && chat.title !== "New chat" ? chat.title : ""}</span>
         <div className="spacer" />
+        {role ? (
+          <button className="pill" onClick={() => projectId && go({ kind: "projects", projectId })} title="Project settings: instructions, files, repos, tasks and threads">
+            <Settings size={15} /> <span className="pill-label">Settings</span>
+          </button>
+        ) : (
         <div className="model-menu">
           <button className={`pill ${project ? "on" : ""}`} onClick={() => setMenu((m) => !m)} title="The project this chat belongs to">
             <FolderClosed size={15} /> <span className="ellipsis pill-label">{project?.name ?? "No project"}</span>
@@ -630,6 +682,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             </div>
           )}
         </div>
+        )}
         <ActiveRepoChip chatId={cid} projectId={projectId} />
         <button className={`pill yolo ${yolo ? "on" : ""}`} onClick={toggleYolo} title={yolo ? "YOLO is on: shell (PowerShell) and other ask-first tools run without asking. Click to turn off." : "Turn on YOLO: run shell (PowerShell) and other ask-first tools without asking."}>
           <Zap size={15} fill={yolo ? "currentColor" : "none"} /> <span className="yolo-text">{yolo ? "YOLO on" : "Ask first"}</span>
@@ -669,7 +722,8 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             <div className="hero">
               <div className="mark"><Mark size={36} /></div>
               <h1>{greeting()}.</h1>
-              <h1 className="s">What should we work on?</h1>
+              <h1 className="s">{role === "coordinator" ? `What should ${project?.name ?? "this project"} work on?` : "What should we work on?"}</h1>
+              {role === "coordinator" && <p className="hint coord-hero">Ask for anything. Quick questions are answered here; real work goes to its own thread, which you'll see on the right and can open at any time.</p>}
               <div className="chips">
                 <Slot name="chat.empty" ctx={slotCtx} variant="chip" />
                 {suggestions.map((s) => (
@@ -683,7 +737,11 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
           ) : (
             <>
               {turns.map((t, i) =>
-                t.role === "user" ? (
+                t.threadUpdate ? (
+                  <ThreadUpdateCard key={t.id} update={t.threadUpdate} current={threadById.get(t.threadUpdate.threadId)} />
+                ) : t.auto ? (
+                  <AutoTurnLine key={t.id} />
+                ) : t.role === "user" ? (
                   <div key={t.id} className="msg user">
                     <div className="user-col">
                       {!!t.attachments?.length && <AttachmentChips items={t.attachments} />}
@@ -788,6 +846,7 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             <RepoComposerMenu chatId={cid} projectId={projectId} ensureChat={ensureChat} iconOnly />
             <Slot name="chat.composer" ctx={slotCtx} />
             <div className="spacer" />
+            <UsageBar model={model ?? state?.config.defaults.chatModel} bump={usageBump} />
             <ModelPicker value={model} onChange={setModel} effort />
             {live && draft.trim() && <button className="send ready" onClick={() => send()} aria-label="Send to the running task" title="Syph reads it at its next step"><CornerDownRight size={18} /></button>}
             {live ? (
@@ -797,8 +856,14 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
             )}
           </div>
         </div>
-        <div className="disclaimer">{live ? "This chat keeps running if you switch chats or pages. Messages you send now reach it at its next step. " : ""}Syph runs locally. Changes to its own skills, memory or prompts wait for your approval in Evolve.</div>
       </div>
     </>
+  );
+  if (role !== "coordinator" || !projectId) return body;
+  return (
+    <div className="chat-with-rail">
+      <div className="chat-pane">{body}</div>
+      <ThreadRail projectId={projectId} open={railOpen} setOpen={setRailOpen} />
+    </div>
   );
 }

@@ -1,0 +1,11 @@
+{
+  "id": "coord-inline",
+  "input": "Quick one: how many minutes are there in 3.5 hours?",
+  "coordinator": true,
+  "checks": [
+    { "type": "tool_not_called", "name": "start_thread" },
+    { "type": "contains", "value": "210" }
+  ],
+  "createdAt": "2026-11-24T00:00:00.000Z",
+  "tags": ["coordinator"]
+}

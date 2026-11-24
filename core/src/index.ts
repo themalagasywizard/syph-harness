@@ -6,6 +6,7 @@ export { describeCron } from "./describe-cron.ts";
 export { nextRun, parseCron } from "./cron.ts";
 export { nextRunOf } from "./scheduler.ts";
 export { complete, setTransport, registerMockModel, spendToday, BudgetError } from "./providers/llm.ts";
+export { miniMaxUsage, openRouterUsage, parseMiniMaxRemains, tightest, type ProviderUsage, type UsageMeter } from "./providers/usage.ts";
 export { readTrace as _readTrace } from "./trace.ts";
 export { listModels, getProfile, saveProfile, resolveModel, MINIMAX_MODELS, MINIMAX_DEFAULT } from "./providers/models.ts";
 export { listStrategies, registerStrategy } from "./strategies/index.ts";

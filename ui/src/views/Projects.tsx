@@ -1,7 +1,19 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Clock, Eye, FolderClosed, FolderOpen, MessageSquare, Plus, Trash2 } from "lucide-react";
-import { useApp } from "../App";
-import { api, relTime, type Project, type ProjectDetail } from "../api";
+import { ArrowLeft, Clock, Eye, FolderClosed, FolderOpen, GitBranch, MessageSquare, Plus, Settings, Trash2 } from "lucide-react";
+import { useApp, type View } from "../App";
+import { api, relTime, usd, type Chat, type Project, type ProjectDetail } from "../api";
+
+/** Open a project: its coordinator chat is the project's front page. */
+export async function openProject(go: (v: View) => void, projectId: string) {
+  try {
+    const c = await api.get<Chat>(`/projects/${projectId}/coordinator`);
+    go({ kind: "chat", chatId: c.id });
+  } catch {
+    go({ kind: "projects", projectId });
+  }
+}
+import { StateBadge, useProjectThreads } from "../components/Threads";
+import { Toggle } from "../components/Toggle";
 import { FileIcon, FileActions, revealFile } from "../components/FilePreview";
 import { Slot } from "../ext";
 import { ProjectRepos } from "../components/Repos";
@@ -18,7 +30,7 @@ export function ProjectsView({ projectId }: { projectId?: string }) {
         <div className="page-head">
           <div>
             <h2>Projects</h2>
-            <p>Each project has its own instructions, files, memory and tasks.</p>
+            <p>Open a project to chat with its coordinator, which hands real work to threads. Its settings hold the instructions, files, repos and tasks.</p>
           </div>
           <div className="spacer" />
           <button className="btn primary" onClick={() => setCreating(true)}><Plus size={18} /> New project</button>
@@ -26,7 +38,7 @@ export function ProjectsView({ projectId }: { projectId?: string }) {
         {projects.length === 0 && <div className="empty card">No projects yet. A project keeps related chats, files and scheduled tasks together, with its own instructions.</div>}
         <div className="grid">
           {projects.map((p) => (
-            <button key={p.id} className="card click" onClick={() => go({ kind: "projects", projectId: p.id })}>
+            <button key={p.id} className="card click" onClick={() => openProject(go, p.id)}>
               <div className="proj-ic" style={{ background: `color-mix(in srgb, ${p.color} 20%, transparent)`, color: p.color }}><FolderClosed size={20} /></div>
               <h3>{p.name}</h3>
               <p>{p.description || "No description"}</p>
@@ -45,7 +57,7 @@ export function ProjectsView({ projectId }: { projectId?: string }) {
           created={async (p) => {
             setCreating(false);
             await refresh();
-            go({ kind: "projects", projectId: p.id });
+            openProject(go, p.id);
           }}
         />
       )}
@@ -77,7 +89,8 @@ function NewProject({ close, created }: { close: () => void; created: (p: Projec
 function ProjectDetailView({ id }: { id: string }) {
   const { go, refresh, tick, state, showFile } = useApp();
   const [p, setP] = useState<ProjectDetail | null>(null);
-  const [tab, setTab] = useState<"chats" | "instructions" | "files" | "tasks">("chats");
+  const [tab, setTab] = useState<"threads" | "instructions" | "files" | "tasks">("threads");
+  const threads = useProjectThreads(id);
   const [instructions, setInstructions] = useState("");
   const [saved, setSaved] = useState(false);
 
@@ -96,6 +109,17 @@ function ProjectDetailView({ id }: { id: string }) {
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
+  const openCoordinator = async () => {
+    const c = await api.get<Chat>(`/projects/${id}/coordinator`);
+    go({ kind: "chat", chatId: c.id });
+  };
+  const setWake = async (on: boolean) => {
+    await api.put(`/projects/${id}`, { coordinatorWake: on });
+    setP((x) => (x ? { ...x, coordinatorWake: on } : x));
+  };
+  const active = (threads?.threads ?? []).filter((t) => !t.resolved);
+  const needsYou = active.filter((t) => t.threadState === "blocked" || t.status === "waiting").length;
+  const working = active.filter((t) => t.status === "running" || t.threadState === "working" || t.threadState === "queued").length;
   const remove = async () => {
     if (!confirm(`Delete project "${p.name}" and its files? Chats are kept.`)) return;
     await api.del(`/projects/${id}`);
@@ -107,16 +131,31 @@ function ProjectDetailView({ id }: { id: string }) {
     <div className="page">
       <div className="page-inner">
         <div className="page-head">
-          <button className="icon-btn" onClick={() => go({ kind: "projects" })} aria-label="Back"><ArrowLeft size={20} /></button>
+          <button className="icon-btn" onClick={openCoordinator} aria-label="Back to the project's chat" title="Back to the chat"><ArrowLeft size={20} /></button>
           <div className="proj-ic" style={{ background: `color-mix(in srgb, ${p.color} 20%, transparent)`, color: p.color }}><FolderClosed size={20} /></div>
           <div style={{ minWidth: 0 }}>
             <h2>{p.name}</h2>
-            <p>{p.description}</p>
+            <p className="proj-settings-sub"><Settings size={14} /> Project settings{p.description ? ` · ${p.description}` : ""}</p>
           </div>
           <div className="spacer" />
           <Slot name="project.header" ctx={{ projectId: id }} variant="btn" />
           <button className="icon-btn" onClick={remove} aria-label="Delete project"><Trash2 size={18} /></button>
-          <button className="btn primary" onClick={() => go({ kind: "chat", projectId: id })}><Plus size={18} /> New chat</button>
+          <button className="btn ghost" onClick={() => go({ kind: "chat", projectId: id })} title="Start a thread yourself: a chat in this project that the coordinator can see"><Plus size={18} /> New thread</button>
+          <button className="btn primary" onClick={openCoordinator}><MessageSquare size={18} /> Open chat</button>
+        </div>
+
+        <div className="coord-card card">
+          <div className="cc-head">
+            <MessageSquare size={17} />
+            <span className="cc-title">Coordinator</span>
+            <span className="hint">{working ? `${working} working` : "Idle"}{needsYou ? ` · ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}{p.spend ? ` · ${usd(p.spend.today)} today, ${usd(p.spend.total)} in all` : ""}</span>
+            <span className="spacer" />
+            {threads?.coordinatorStatus && <span className={`live-dot ${threads.coordinatorStatus}`} />}
+          </div>
+          <div className="cc-foot">
+            <Toggle on={p.coordinatorWake !== false} onChange={setWake} label="Follow up on finished threads" />
+            <span className="hint"><b>Follow up on finished threads.</b> The coordinator reads each finished thread and tells you the outcome (at most a few times an hour).</span>
+          </div>
         </div>
 
         <div className="proj-folder">
@@ -128,18 +167,21 @@ function ProjectDetailView({ id }: { id: string }) {
         <ProjectRepos projectId={id} />
 
         <div className="tabs">
-          {(["chats", "instructions", "files", "tasks"] as const).map((t) => (
-            <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>
+          {(["threads", "instructions", "files", "tasks"] as const).map((t) => (
+            <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}{t === "threads" && active.length ? ` (${active.length})` : ""}</button>
           ))}
         </div>
 
-        {tab === "chats" && (
+        {tab === "threads" && (
           <div className="list">
-            {p.chats.length === 0 && <div className="empty">No chats yet.</div>}
-            {p.chats.map((c) => (
-              <button key={c.id} className="row" style={{ gridTemplateColumns: "1fr auto", width: "100%", textAlign: "left" }} onClick={() => go({ kind: "chat", chatId: c.id })}>
-                <span className="name ellipsis">{c.title}</span>
-                <span className="sub">{relTime(c.updatedAt)}</span>
+            {!threads?.threads.length && <div className="empty">No threads yet. Ask the coordinator for some work and it starts one.</div>}
+            {threads?.threads.map((t) => (
+              <button key={t.id} className={`row thread-row ${t.resolved ? "resolved" : ""}`} style={{ gridTemplateColumns: "18px 1fr auto auto auto", width: "100%", textAlign: "left" }} onClick={() => go({ kind: "chat", chatId: t.id })}>
+                <GitBranch size={15} className="sub" />
+                <span className="ellipsis"><span className="name">{t.title}</span>{t.summary && <span className="sub thread-sum"> — {t.summary}</span>}</span>
+                <StateBadge state={t.threadState} live={t.status} />
+                <span className="sub">{usd(t.costUsd)}</span>
+                <span className="sub">{relTime(t.updatedAt)}</span>
               </button>
             ))}
           </div>

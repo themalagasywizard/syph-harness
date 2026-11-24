@@ -3,6 +3,7 @@ import { ChevronDown, ChevronsDownUp, ChevronsUpDown, Cloud, Cpu, Download, Plug
 import { Toggle } from "../components/Toggle";
 import { ModelPicker } from "../components/ModelPicker";
 import { MiniMaxKey, OpenRouterKey } from "../components/OpenRouterKey";
+import { UsageCard } from "../components/UsageBar";
 import { InterfaceSettings } from "../components/InterfaceSettings";
 import { PhonePairing } from "../components/PhonePairing";
 import { useApp } from "../App";
@@ -111,6 +112,7 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
                 <h3>OpenRouter</h3>
                 <p>Hundreds of hosted models through one key. Used for DeepSeek by default.</p>
                 <OpenRouterKey onChange={refresh} />
+                {cfg.hasOpenRouterKey && <UsageCard provider="openrouter" />}
               </div>
               <span className={`conn ${cfg.hasOpenRouterKey ? "" : "off"}`}>{cfg.hasOpenRouterKey ? "● Key set" : "○ No key"}</span>
             </div>
@@ -122,6 +124,7 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
                 <h3>MiniMax</h3>
                 <p>MiniMax M3.1 Flash and M3 with your MiniMax subscription or API key. Pick them as <code>minimax:MiniMax-M3.1-Flash</code>.</p>
                 <MiniMaxKey onChange={refresh} />
+                {cfg.hasMiniMaxKey && <UsageCard provider="minimax" />}
                 {cfg.hasMiniMaxKey && (cfg.defaults.chatModel !== MINIMAX_DEFAULT || cfg.defaults.taskModel !== MINIMAX_DEFAULT) && (
                   <button className="btn ghost sm" style={{ marginTop: 10 }} onClick={() => patch({ defaults: { ...cfg.defaults, chatModel: MINIMAX_DEFAULT, taskModel: MINIMAX_DEFAULT } })}>
                     Use MiniMax M3.1 Flash for chats and tasks
@@ -226,10 +229,12 @@ export function SettingsView({ section, item }: { section?: string; item?: strin
             ["longMinutes", "Minutes for a long task", "0 means no cap. Runs can go for hours.", 0, 100000],
             ["maxUsdPerLongRun", "Spend for a long task (USD)", "0 means no cap. The daily chat budget below still applies: raise it for long runs.", 0, 1000],
             ["reviewAfterErrors", "Review a run after this many failed calls", "Syph works out what it was missing and proposes a fix (a tool, a skill, a rule) in Evolve. 0 turns this off.", 0, 100],
+            ["maxThreads", "Project threads at once", "How many threads the coordinators may run at the same time. More wait in a queue.", 1, 20],
+            ["coordinatorWakesPerHour", "Coordinator follow-ups per hour", "How often finished threads may wake a coordinator to report. Stops two agents from pinging each other forever. 0 turns follow-ups off.", 0, 60],
           ] as const).map(([key, name, sub, min, max]) => (
             <div className="row" style={{ gridTemplateColumns: "1fr 120px" }} key={key}>
               <div><div className="name">{name}</div><div className="sub">{sub}</div></div>
-              <input className="input" type="number" min={min} max={max} step={key === "maxUsdPerRun" || key === "maxUsdPerLongRun" ? 0.1 : 1} value={agent[key] ?? 0} onChange={(e) => patch({ agent: { ...agent, [key]: Number(e.target.value) } })} />
+              <input className="input" type="number" min={min} max={max} step={key === "maxUsdPerRun" || key === "maxUsdPerLongRun" ? 0.1 : 1} value={agent[key] ?? (key === "maxThreads" ? 3 : key === "coordinatorWakesPerHour" ? 6 : 0)} onChange={(e) => patch({ agent: { ...agent, [key]: Number(e.target.value) } })} />
             </div>
           ))}
           <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>

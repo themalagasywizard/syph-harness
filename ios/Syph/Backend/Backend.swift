@@ -21,6 +21,8 @@ protocol SyphBackend: AnyObject, Sendable {
     func createProject(name: String, description: String, instructions: String) async throws -> Project
     func updateProject(_ id: String, _ patch: JSONValue) async throws
     func deleteProject(_ id: String) async throws
+    /// The project's coordinator chat (made on first use) and its threads.
+    func projectThreads(_ id: String) async throws -> ProjectThreads
 
     // Chats
     func chat(_ id: String) async throws -> Chat

@@ -284,6 +284,10 @@ final class DemoBackend: SyphBackend, @unchecked Sendable {
 
     // MARK: Projects
 
+    func projectThreads(_ id: String) async throws -> ProjectThreads {
+        throw SyphError(message: "Coordinators and threads need Syph on your computer.")
+    }
+
     func project(_ id: String) async throws -> ProjectDetail {
         await pause(150)
         return try sync {

@@ -18,6 +18,7 @@ import { Home } from "./home.ts";
 import { addUsage, emptyUsage, runAgent, STEER_PREFIX } from "./loop.ts";
 import { connectMcp, type McpConnection } from "./mcp.ts";
 import { complete } from "./providers/llm.ts";
+import { CreditsError, providerName } from "./providers/client.ts";
 import { getProfile, learnContextWindow, listModels, saveProfile } from "./providers/models.ts";
 import { Scheduler } from "./scheduler.ts";
 import { getStrategy } from "./strategies/index.ts";
@@ -34,6 +35,8 @@ import type { FileRef, RepoLink } from "./types.ts";
 import { resolve, relative, sep, isAbsolute, extname } from "node:path";
 import { mistakes, needsReview, reviewRun } from "./evolve/review.ts";
 import { attachmentsForModel, saveAttachment } from "./attachments.ts";
+import { Threads } from "./threads.ts";
+import { COORDINATOR_PROMPT, threadTools } from "./tools/threads.ts";
 
 /** Files people read: shown in the answer. Code and data files are shown only when the user asked for them. */
 const READABLE = /\.(md|markdown|txt|pdf|docx?|odt|rtf|xlsx?|ods|csv|tsv|pptx?|odp|key|html?|png|jpe?g|gif|webp|svg|bmp|mp3|wav|m4a|mp4|mov|webm|zip)$/i;
@@ -83,7 +86,7 @@ export interface Job {
   endedAt?: string;
 }
 
-type Listener = (e: { type: "job"; job: Job } | { type: "task"; task: Task } | { type: "proposal"; id: string } | { type: "chats" } | { type: "connectors" } | { type: "ui" }) => void;
+type Listener = (e: { type: "job"; job: Job } | { type: "task"; task: Task } | { type: "proposal"; id: string } | { type: "chats" } | { type: "threads"; coordinatorId?: string } | { type: "connectors" } | { type: "ui" }) => void;
 
 interface LiveRun {
   ac: AbortController;
@@ -97,6 +100,8 @@ interface LiveRun {
 const READ_ONLY_TOOLS = new Set(["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_skills", "propose_skill_changes", "list_connectors", "list_ui", "propose_ui_change", "propose_skill", "propose_memory", "create_task", "create_connector", "update_plan", "list_repos", "github_repos", "github_api", "github_pr_create"]);
 /** What the agent may use while it drafts a contract in long-task mode: look around, write nothing. */
 const DRAFT_TOOLS = ["list_files", "read_file", "search_files", "web_fetch", "read_skill", "list_skills", "list_repos", "github_repos", "list_connectors", "set_contract", "ask_user", "update_plan", "note_progress"];
+const THREAD_PROMPT = `# You are working in a thread
+This chat is a thread the project's coordinator started for one piece of work. Do the work fully here. The user may open this thread and talk to you directly. When you finish, end with a short, factual result: what you did, the files you changed with their paths, and anything left open. The coordinator reads that answer to report back.`;
 const DRAFT_PROMPT = `# Long-task mode: draft the contract first
 The user switched on long-task mode. Before any work: look around as much as you need (read-only), then call set_contract with the goal, the scope, the paths never to touch, and done_when checks with commands that prove the work is done. Then stop and tell the user, in two or three lines, that the contract is ready for them to review, edit and approve. Don't change any file yet: that starts once they approve.`;
 
@@ -118,10 +123,26 @@ export class Harness {
   private lastReview = new Map<string, number>();
   /** App connectors (Google Workspace, and any the agent writes). */
   readonly connectors: Connectors;
+  /** Project coordinators and their threads. */
+  readonly threads: Threads;
 
   constructor(home?: Home | string) {
     this.home = home instanceof Home ? home : new Home(home);
     this.connectors = new Connectors(this.home, [googleWorkspace, github]);
+    this.threads = new Threads({
+      home: this.home,
+      isLive: (cid) => this.live.has(cid),
+      startRun: (cid, text, opts) => {
+        if (this.live.has(cid)) throw new Error("That chat is still working.");
+        this.runLive(cid, text, opts).catch(() => {});
+      },
+      steer: (cid, text) => void this.queueMessage(cid, text),
+      stop: (cid) => this.stopChat(cid),
+      changed: (coordinatorId) => {
+        this.broadcast({ type: "threads", coordinatorId });
+        this.broadcast({ type: "chats" });
+      },
+    });
   }
 
   async init(opts: { scheduler?: boolean; mcp?: boolean } = {}) {
@@ -129,6 +150,7 @@ export class Harness {
     await this.reloadExtensions();
     await this.connectors.reload();
     if (opts.mcp !== false && this.home.config().mcpServers.length) this.mcp = await connectMcp(this.home.config().mcpServers);
+    this.threads.recover();
     if (opts.scheduler) {
       this.scheduler = new Scheduler(this.home, (t) => this.runTask(t.id).then(() => undefined));
       this.scheduler.start();
@@ -444,9 +466,12 @@ export class Harness {
     return saveAttachment(store.workspaceFor(this.home, chat.projectId), name, Buffer.from(base64, "base64"));
   }
 
-  private async runLive(chatId: string, text: string, opts: { model?: string; approve?: ToolContext["approve"]; attachments?: Attachment[]; mode?: "long" }) {
+  private async runLive(chatId: string, text: string, opts: { model?: string; approve?: ToolContext["approve"]; attachments?: Attachment[]; mode?: "long"; auto?: boolean }) {
     const run: LiveRun = { ac: new AbortController(), inbox: [], events: [], listeners: new Set() };
     this.live.set(chatId, run);
+    const record = store.getChat(this.home, chatId);
+    if (record?.role === "thread") this.threads.onRunStart(record);
+    let ended: Turn | undefined;
     const emit = (e: AgentEvent) => {
       const last = run.events.at(-1);
       // Keep the replay buffer small: consecutive tokens are merged.
@@ -455,15 +480,27 @@ export class Harness {
       else if (e.type === "message" && (e.message as ChatMessage).tool_calls?.length) run.events.push({ type: "note", text: "", reset: true });
       for (const l of run.listeners) l(e);
       if (e.type === "approval_request" || e.type === "approval_done") this.broadcast({ type: "chats" });
+      if (record?.role === "thread") {
+        if (e.type === "approval_request") this.threads.onBlocked(chatId, `It needs your approval to run ${e.tool}.`);
+        if (e.type === "approval_done") this.threads.onUnblocked(chatId);
+      }
     };
     this.broadcast({ type: "chats" });
     try {
-      return await this.chat(chatId, text, { model: opts.model, signal: run.ac.signal, emit, approve: opts.approve, attachments: opts.attachments, mode: opts.mode });
+      ended = await this.chat(chatId, text, { model: opts.model, signal: run.ac.signal, emit, approve: opts.approve, attachments: opts.attachments, mode: opts.mode, auto: opts.auto });
+      return ended;
     } finally {
       this.live.delete(chatId);
       for (const l of run.listeners) l({ type: "closed" } as any);
       run.listeners.clear();
       this.broadcast({ type: "chats" });
+      if (record?.role) {
+        try {
+          this.threads.onRunEnd(chatId, ended, run.ac.signal.aborted);
+        } catch {
+          /* a thread update must never break a run */
+        }
+      }
     }
   }
 
@@ -567,7 +604,7 @@ export class Harness {
 
   // ---------- Chat ----------
 
-  async chat(chatId: string, text: string, opts: { model?: string; signal?: AbortSignal; emit?: (e: AgentEvent) => void; approve?: ToolContext["approve"]; attachments?: Attachment[]; mode?: "long" } = {}): Promise<Turn> {
+  async chat(chatId: string, text: string, opts: { model?: string; signal?: AbortSignal; emit?: (e: AgentEvent) => void; approve?: ToolContext["approve"]; attachments?: Attachment[]; mode?: "long"; auto?: boolean } = {}): Promise<Turn> {
     const chat = store.getChat(this.home, chatId);
     if (!chat) throw new Error(`No chat ${chatId}`);
     // Attachments must be files saved in this chat's workspace (by saveUpload), never arbitrary paths.
@@ -579,9 +616,13 @@ export class Harness {
     const emit = opts.emit ?? (() => {});
     const model = opts.model ?? chat.model ?? this.home.config().defaults.chatModel;
     chat.model = model;
-    const userTurn: Turn = { id: id("u_"), role: "user", content: text, createdAt: now(), ...(attachments.length ? { attachments } : {}) };
+    const userTurn: Turn = { id: id("u_"), role: "user", content: text, createdAt: now(), ...(attachments.length ? { attachments } : {}), ...(opts.auto ? { auto: true } : {}) };
     chat.turns.push(userTurn);
-    if (chat.turns.length === 1) chat.title = (text.trim() ? text.replace(/\s+/g, " ").slice(0, 60) + (text.length > 60 ? "…" : "") : attachments.map((a) => a.name).join(", ").slice(0, 60));
+    // A coordinator's thread updates go into its history just before this message.
+    const notes: ChatMessage[] = (chat.pendingNotes ?? []).map((n) => ({ role: "user", content: n }));
+    delete chat.pendingNotes;
+    const coordinator = chat.role === "coordinator";
+    if (chat.turns.length === 1 && !chat.role) chat.title = (text.trim() ? text.replace(/\s+/g, " ").slice(0, 60) + (text.length > 60 ? "…" : "") : attachments.map((a) => a.name).join(", ").slice(0, 60));
     store.saveChat(this.home, chat);
 
     await learnContextWindow(this.home, model);
@@ -635,7 +676,7 @@ export class Harness {
     try {
       const att = attachmentsForModel(attachments, profile);
       const userMessage: ChatMessage = { role: "user", content: [text, att.text].filter(Boolean).join("\n\n"), ...(att.images.length ? { images: att.images } : {}) };
-      let history: ChatMessage[] = [...chat.history, userMessage];
+      let history: ChatMessage[] = [...chat.history, ...notes, userMessage];
       history = await compactHistory(history, profile.contextWindow, async (t) => {
         const r = await complete(this.home, { model, messages: [{ role: "system", content: "Summarise this conversation so it can continue: decisions, facts, open tasks, file paths. Be concise." }, { role: "user", content: t }] });
         addUsage(usage, r);
@@ -646,7 +687,7 @@ export class Harness {
         updateProgress(this.home, key, (p) => void (p.contract = { goal: text.slice(0, 300), scope: [], never: [], doneWhen: [], draft: true, updatedAt: now() }));
       }
       const drafting = !!readProgress(this.home, key).contract?.draft;
-      const system = buildSystemPrompt(this.home, { model, projectId: chat.projectId, query: text, connectors: await this.appPrompt(chat.projectId, chat), extra: [progressPrompt(readProgress(this.home, key)), drafting ? DRAFT_PROMPT : ""].filter(Boolean).join("\n\n") });
+      const system = buildSystemPrompt(this.home, { model, projectId: chat.projectId, query: text, connectors: await this.appPrompt(chat.projectId, chat), extra: [coordinator ? COORDINATOR_PROMPT : "", chat.role === "thread" ? THREAD_PROMPT : "", progressPrompt(readProgress(this.home, key)), drafting ? DRAFT_PROMPT : ""].filter(Boolean).join("\n\n") });
       const repo = activeRepo(this.home, chat, chat.projectId);
       let checkpoints = Promise.resolve();
       const onPlan = (steps: PlanStep[]) => {
@@ -662,6 +703,10 @@ export class Harness {
       const ctx = this.toolContext(trace.runId, { projectId: chat.projectId, chatId, approve, signal: opts.signal, model, onPlan, progressKey: key, onContract: (c) => relay({ type: "contract", contract: c }) });
       for (const t of chat.loadedTools ?? []) ctx.loadedTools!.add(t);
       const tools = drafting ? this.tools().pick(DRAFT_TOOLS) : this.tools();
+      if (coordinator && !drafting) {
+        for (const t of threadTools) tools.add(t);
+        ctx.hooks.threads = this.threads.hooksFor(chatId);
+      }
       const strategy = getStrategy(profile.strategy);
       // Long task: an approved contract, or a plan of three or more steps. It then runs to completion.
       const isLong = () => {
@@ -732,8 +777,11 @@ export class Harness {
       relay({ type: "run_end", runId: trace.runId, content: result.content, usage, status: "ok", stopReason: result.stopReason, recap: turn.recap, question: turn.question });
     } catch (e) {
       const cancelled = opts.signal?.aborted;
-      turn.content = cancelled ? "(stopped)" : `Something went wrong: ${(e as Error).message}`;
-      chat.history = [...chat.history, { role: "user", content: text }];
+      if (!cancelled && e instanceof CreditsError) {
+        turn.failure = { kind: "credits", provider: e.provider, ...(e.affordable !== undefined ? { affordable: e.affordable } : {}) };
+        turn.content = `Your ${providerName(e.provider)} balance has run out, so Syph couldn't reply. Add credits, then try again.`;
+      } else turn.content = cancelled ? "(stopped)" : `Something went wrong: ${(e as Error).message}`;
+      chat.history = [...chat.history, ...notes, { role: "user", content: text }];
       trace.finish({ status: cancelled ? "cancelled" : "error", output: turn.content, ...usage });
       relay({ type: "error", error: turn.content });
       relay({ type: "run_end", runId: trace.runId, content: turn.content, usage, status: cancelled ? "cancelled" : "error" });
@@ -779,7 +827,10 @@ export class Harness {
     if (!task) throw new Error(`No task ${taskId}`);
     this.broadcast({ type: "task", task: store.patchTask(this.home, taskId, { lastStatus: "running" }) });
     // Every run of a task shares one progress file, so the next run resumes instead of starting cold.
-    const chat = store.createChat(this.home, { projectId: task.projectId, title: `${task.name} · ${new Date().toLocaleString()}`, model: task.model ?? this.home.config().defaults.taskModel, progressKey: `task-${task.id}` });
+    // A task can run as a thread of its project's coordinator, which then reports on each run.
+    // In a project every run is a thread of the coordinator, which reports on it.
+    const inProject = !!task.projectId && !!store.getProject(this.home, task.projectId);
+    const chat = store.createChat(this.home, { projectId: task.projectId, title: inProject ? task.name : `${task.name} · ${new Date().toLocaleString()}`, model: task.model ?? this.home.config().defaults.taskModel, progressKey: `task-${task.id}`, ...(inProject ? { threadState: "working" as const, origin: "task" as const } : {}) });
     // The tools an earlier run loaded (for example a connector's write tool) are there from the start.
     const prev = task.lastChatId ? store.getChat(this.home, task.lastChatId) : null;
     if (prev?.loadedTools?.length) store.saveChat(this.home, { ...chat, loadedTools: prev.loadedTools });
@@ -788,7 +839,7 @@ export class Harness {
     try {
       const turn = await this.chatUnattended(chat.id, task.prompt, task.model ?? this.home.config().defaults.taskModel);
       runId = turn.runId;
-      if (turn.content.startsWith("Something went wrong")) status = "error";
+      if (turn.failure || turn.content.startsWith("Something went wrong")) status = "error";
     } catch {
       status = "error";
     }

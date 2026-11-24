@@ -69,7 +69,12 @@ private struct ChatScreen: View {
                         hero
                     } else {
                         ForEach(vm.turns) { t in
-                            if t.role == .user {
+                            if let u = t.threadUpdate {
+                                ThreadUpdateCard(update: u).id(t.id)
+                            } else if t.auto == true {
+                                Label("Following up on the thread update", systemImage: "arrow.triangle.branch")
+                                    .font(.caption).foregroundStyle(Palette.faint).id(t.id)
+                            } else if t.role == .user {
                                 UserBubble(text: t.content).id(t.id)
                                     .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
                             } else {

@@ -111,14 +111,106 @@ function snippetAround(text: string, word: string, span = 90): string {
 export const getChat = (home: Home, cid: string) => readJson<ChatRecord | null>(home.path("chats", `${cid}.json`), null);
 export const saveChat = (home: Home, c: ChatRecord) => writeJson(home.path("chats", `${c.id}.json`), { ...c, updatedAt: now() });
 
-export function createChat(home: Home, input: { projectId?: string; title?: string; model?: string; progressKey?: string }): ChatRecord {
-  const c: ChatRecord = { id: id("c_"), title: input.title ?? "New chat", projectId: input.projectId, model: input.model, createdAt: now(), updatedAt: now(), turns: [], history: [], ...(input.progressKey ? { progressKey: input.progressKey } : {}) };
+export function createChat(home: Home, input: { projectId?: string; title?: string; model?: string; progressKey?: string; role?: ChatRecord["role"]; parentId?: string; threadState?: ChatRecord["threadState"]; origin?: ChatRecord["origin"] }): ChatRecord {
+  // Every chat in a project is a thread of the project's coordinator.
+  if (input.projectId && !input.role && getProject(home, input.projectId)) {
+    input = { ...input, role: "thread", parentId: getOrCreateCoordinator(home, input.projectId).id, origin: input.origin ?? "user" };
+  }
+  const c: ChatRecord = {
+    id: id("c_"),
+    title: input.title ?? "New chat",
+    projectId: input.projectId,
+    model: input.model,
+    createdAt: now(),
+    updatedAt: now(),
+    turns: [],
+    history: [],
+    ...(input.progressKey ? { progressKey: input.progressKey } : {}),
+    ...(input.role ? { role: input.role } : {}),
+    ...(input.parentId ? { parentId: input.parentId } : {}),
+    ...(input.threadState ? { threadState: input.threadState } : {}),
+    ...(input.role === "thread" && input.origin ? { origin: input.origin } : {}),
+  };
   saveChat(home, c);
   return c;
 }
 
 export function deleteChat(home: Home, cid: string) {
   rmSync(home.path("chats", `${cid}.json`), { force: true });
+}
+
+/** Change a chat on disk without touching its history or turns (safe while it runs: the run re-reads the file when it ends). */
+export function patchChat(home: Home, cid: string, fn: (c: ChatRecord) => void) {
+  const c = getChat(home, cid);
+  if (!c) return null;
+  fn(c);
+  writeJson(home.path("chats", `${cid}.json`), c);
+  return c;
+}
+
+// ---------- Coordinator and threads ----------
+
+/** The project's coordinator chat, made the first time it is asked for. */
+export function getOrCreateCoordinator(home: Home, pid: string): ChatRecord {
+  const p = getProject(home, pid);
+  if (!p) throw Object.assign(new Error(`No project ${pid}`), { status: 404 });
+  const existing = p.coordinatorChatId ? getChat(home, p.coordinatorChatId) : null;
+  if (existing) return existing;
+  const c = createChat(home, { projectId: pid, title: p.name, role: "coordinator" });
+  writeJson(home.path("projects", pid, "project.json"), { ...p, coordinatorChatId: c.id });
+  return c;
+}
+
+export type ThreadSummary = Omit<ChatRecord, "history" | "turns" | "pendingNotes" | "wakes"> & { costUsd: number; lastAnswer?: string };
+
+/** Make a plain chat a thread of a project's coordinator (a chat moved into a project, or one from before threads). */
+export function adoptIntoProject(home: Home, cid: string, pid: string) {
+  const coord = getOrCreateCoordinator(home, pid);
+  return patchChat(home, cid, (c) => {
+    if (c.role) return;
+    c.projectId = pid;
+    c.role = "thread";
+    c.parentId = coord.id;
+    c.origin = c.origin ?? "user";
+    c.threadState = c.threadState ?? "done";
+  });
+}
+
+/** A coordinator's threads, newest first. */
+export function listThreads(home: Home, coordinatorId: string): ThreadSummary[] {
+  const dir = home.path("chats");
+  if (!existsSync(dir)) return [];
+  const out: ThreadSummary[] = [];
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".json")) continue;
+    const c = readJson<ChatRecord | null>(home.path("chats", f), null);
+    if (!c || c.parentId !== coordinatorId) continue;
+    const { history: _h, turns, pendingNotes: _n, wakes: _w, ...rest } = c;
+    const costUsd = (turns ?? []).reduce((s, t) => s + (t.usage?.costUsd ?? 0), 0);
+    const lastAnswer = (turns ?? []).findLast((t) => t.role === "assistant")?.content;
+    out.push({ ...rest, costUsd, ...(lastAnswer ? { lastAnswer: lastAnswer.slice(0, 400) } : {}) });
+  }
+  return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/** What a project's chats cost: today (local day) and in all. */
+export function projectSpend(home: Home, pid: string) {
+  const dir = home.path("chats");
+  const day = new Date().toDateString();
+  let today = 0;
+  let total = 0;
+  if (!existsSync(dir)) return { today, total };
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".json")) continue;
+    const c = readJson<ChatRecord | null>(home.path("chats", f), null);
+    if (!c || c.projectId !== pid) continue;
+    for (const t of c.turns ?? []) {
+      const usd = t.usage?.costUsd ?? 0;
+      total += usd;
+      if (new Date(t.createdAt).toDateString() === day) today += usd;
+    }
+  }
+  return { today, total };
 }
 
 // ---------- Tasks ----------

@@ -30,6 +30,8 @@ export interface ToolContext {
     progress?: (entry: { decision?: string; deadEnd?: string; blocked?: string; done?: string }) => string;
     /** Make hidden connector or MCP tools available to this chat (set by Harness). */
     loadTools?: (names: string[]) => void;
+    /** A coordinator's threads (set by Harness for coordinator chats only). */
+    threads?: ThreadHooks;
   };
   /** Connector and MCP tool names this chat has loaded (lazy tools). */
   loadedTools?: Set<string>;
@@ -49,4 +51,14 @@ export interface Tool<S extends z.ZodType = z.ZodType> {
 
 export function defineTool<S extends z.ZodType>(t: Tool<S>): Tool<S> {
   return t;
+}
+
+/** What a coordinator can do with its threads. Each returns text for the model. */
+export interface ThreadHooks {
+  start: (t: { title: string; prompt: string; model?: string; long?: boolean }) => string;
+  message: (threadId: string, text: string) => string;
+  list: () => string;
+  read: (threadId: string, lastTurns?: number) => string;
+  stop: (threadId: string) => string;
+  resolve: (threadId: string) => string;
 }

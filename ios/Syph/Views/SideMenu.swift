@@ -7,7 +7,7 @@ struct SideMenu: View {
     @State private var confirmDelete: ChatSummary?
 
     private var chats: [ChatSummary] {
-        let all = app.state?.chats ?? []
+        let all = (app.state?.chats ?? []).filter { $0.role != "thread" }
         return query.isEmpty ? all : all.filter { $0.title.localizedCaseInsensitiveContains(query) }
     }
 

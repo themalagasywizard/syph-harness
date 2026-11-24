@@ -163,6 +163,12 @@ export interface SyphConfig {
     gitCheckpoints?: boolean;
     /** Send connector and MCP tools only once the chat needs them (find_tools). */
     lazyTools?: boolean;
+    /** Project threads that may run at once; more wait in a queue (default 3). */
+    maxThreads?: number;
+    /** Times threads may wake a coordinator in one hour (default 6, 0: never). */
+    coordinatorWakesPerHour?: number;
+    /** Have the reflector model write a one-line brief for each thread update (default on). */
+    threadBriefs?: boolean;
   };
   disabledExtensions?: string[];
   /** Connectors switched off on the Connectors page. */
@@ -181,6 +187,27 @@ export interface Project {
   updatedAt: string;
   /** Git repositories connected to (cloned into) this project. */
   repos?: RepoLink[];
+  /** The project's coordinator chat: it starts, follows and reports on the project's threads. */
+  coordinatorChatId?: string;
+  /** Let the coordinator wake up and react when a thread finishes (default on). */
+  coordinatorWake?: boolean;
+}
+
+/** Where a thread is: running, waiting for the user, finished with work to look at, and so on. */
+export type ThreadState = "queued" | "working" | "blocked" | "review_ready" | "done" | "failed" | "stopped";
+
+/** A card the harness posts in a coordinator chat about one of its threads. */
+export interface ThreadUpdate {
+  threadId: string;
+  title: string;
+  state: ThreadState;
+  /** One or two sentences, from what the harness saw (and a short brief when the reflector is available). */
+  summary: string;
+  /** What the thread needs from the user, when it is blocked. */
+  needs?: string;
+  recap?: Recap;
+  costUsd?: number;
+  filesChanged?: number;
 }
 
 export interface RepoLink {
@@ -211,6 +238,23 @@ export interface ChatRecord {
   progressKey?: string;
   /** Connector and MCP tools this chat has loaded with find_tools. */
   loadedTools?: string[];
+  /** "coordinator": a project's main chat, with the thread tools. "thread": a chat it started. */
+  role?: "coordinator" | "thread";
+  /** For a thread: the project's coordinator chat it belongs to. */
+  parentId?: string;
+  /** For a thread: who started it. The coordinator ("coordinator"), a scheduled task ("task"), or the user opening a chat in the project ("user"). */
+  origin?: "coordinator" | "user" | "task";
+  threadState?: ThreadState;
+  /** For a thread: the last summary posted to the coordinator. */
+  summary?: string;
+  /** For a thread: the user resolved it (hidden from the active list). */
+  resolved?: boolean;
+  /** For a thread: the prompt and options it was started with, kept while it waits in the queue. */
+  queuedStart?: { prompt: string; model?: string; mode?: "long" };
+  /** For a coordinator: thread updates it has not read yet; they go into its history on its next turn. */
+  pendingNotes?: string[];
+  /** For a coordinator: when it was woken by threads lately (loop guard). */
+  wakes?: string[];
 }
 
 export interface Turn {
@@ -241,8 +285,23 @@ export interface Turn {
   review?: { status: "running" | "proposed" | "none"; mistakes: number; proposalId?: string; title?: string; note?: string };
   /** Files the user attached to this message (user turns). */
   attachments?: Attachment[];
+  /** In a coordinator chat: a card about one of its threads, posted by the harness. */
+  threadUpdate?: ThreadUpdate;
+  /** A turn the harness started on the coordinator's behalf (a wake-up), not the user. */
+  auto?: boolean;
   usage?: Usage;
+  /** The run failed for a reason the chat explains with its own card instead of a raw error. */
+  failure?: TurnFailure;
   createdAt: string;
+}
+
+/** The provider account ran out of credit: the chat offers a link to top up and a retry. */
+export interface TurnFailure {
+  kind: "credits";
+  /** "openrouter", "minimax", or another configured provider's name. */
+  provider: string;
+  /** Tokens the remaining balance still covers, when the provider said. */
+  affordable?: number;
 }
 
 export interface Attachment {
@@ -281,6 +340,8 @@ export interface Task {
   lastStatus: "ok" | "error" | "running" | "never";
   lastRunId?: string;
   lastChatId?: string;
+  /** Run each time as a thread of the project's coordinator, which then reports on it. */
+  viaCoordinator?: boolean;
 }
 
 export type ProposalKind = "memory" | "skill" | "prompt" | "profile" | "strategy" | "extension" | "ui";
@@ -329,6 +390,7 @@ export type Check =
   | { type: "regex"; pattern: string; flags?: string }
   | { type: "json"; requiredKeys?: string[] }
   | { type: "tool_called"; name: string }
+  | { type: "tool_not_called"; name: string }
   | { type: "max_words"; value: number }
   | { type: "exec"; command: string; expectExit?: number }
   | { type: "judge"; rubric: string; reference?: string };
@@ -342,6 +404,8 @@ export interface EvalCase {
   /** Files seeded into the workspace before the case runs. */
   files?: Record<string, string>;
   source?: { runId?: string; chatId?: string; rating?: "up" | "down" };
+  /** Run the case as a project coordinator (with the thread tools). */
+  coordinator?: boolean;
   createdAt: string;
 }
 

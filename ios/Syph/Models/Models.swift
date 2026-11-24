@@ -116,6 +116,40 @@ struct Turn: Codable, Identifiable, Hashable, Sendable {
     /// How long the answer took, start to finish.
     var durationMs: Double?
     var createdAt: String?
+    /// In a coordinator chat: a card about one of its threads.
+    var threadUpdate: ThreadUpdate?
+    /// A turn Syph started for the coordinator after a thread update (not typed by the user).
+    var auto: Bool?
+}
+
+/// A card Syph posts in a project's coordinator chat when one of its threads ends or needs you.
+struct ThreadUpdate: Codable, Hashable, Sendable {
+    var threadId: String
+    var title: String
+    /// queued, working, blocked, review_ready, done, failed or stopped.
+    var state: String
+    var summary: String
+    var needs: String?
+    var costUsd: Double?
+    var filesChanged: Int?
+}
+
+/// One of a project's threads, as `/api/projects/:id/threads` lists it.
+struct ThreadSummary: Codable, Identifiable, Hashable, Sendable {
+    var id: String
+    var title: String
+    var updatedAt: String?
+    var status: String?
+    var threadState: String?
+    var summary: String?
+    var resolved: Bool?
+    var costUsd: Double?
+}
+
+struct ProjectThreads: Codable, Hashable, Sendable {
+    var coordinatorId: String
+    var coordinatorStatus: String?
+    var threads: [ThreadSummary]
 }
 
 struct PlanStep: Codable, Hashable, Sendable {
@@ -144,6 +178,9 @@ struct ChatSummary: Codable, Identifiable, Hashable, Sendable {
     var updatedAt: String?
     /// "running" while working on the server, "waiting" when it needs an approval.
     var status: String?
+    /// "coordinator" for a project's main chat, "thread" for a chat it started.
+    var role: String?
+    var parentId: String?
 }
 
 struct Chat: Codable, Identifiable, Hashable, Sendable {

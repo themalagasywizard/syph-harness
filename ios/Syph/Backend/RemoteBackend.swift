@@ -111,6 +111,7 @@ final class RemoteBackend: SyphBackend, @unchecked Sendable {
     // MARK: Projects
 
     func project(_ id: String) async throws -> ProjectDetail { try await get("/projects/\(id)") }
+    func projectThreads(_ id: String) async throws -> ProjectThreads { try await get("/projects/\(id)/threads") }
     func createProject(name: String, description: String, instructions: String) async throws -> Project {
         try await call("POST", "/projects", ["name": .string(name), "description": .string(description), "instructions": .string(instructions)])
     }

@@ -24,6 +24,18 @@ Open **Settings → OpenRouter**, paste your key (from [openrouter.ai/keys](http
 
 Every chat runs on Syph's local server, not in the window. Start a long job, open **New chat** and start another, or go to Settings: both keep working. Running chats have a pulsing dot in the sidebar, and an amber dot when one is waiting for your approval. Open a chat again to see it catch up live. The square button stops that chat only.
 
+### Projects: a coordinator and its threads
+
+Every project has a **coordinator**: its main chat, at the top of the project page (or press **Coordinator**). Ask it for anything. Quick questions are answered right there; real work (editing files, code, research, long tasks) goes to its own **thread**, a separate chat with its own agent, and several can run at once.
+
+- **Threads rail:** beside the coordinator you see each thread with its state (working, needs you, ready for review, done, failed), its summary and what it cost. Click one to open it and talk to that agent directly, like any chat. A breadcrumb takes you back.
+- **Update cards:** when a thread finishes or needs you, a short card appears in the coordinator chat. The summary comes from what Syph saw the thread do (files changed, checks run), plus a one-line brief. The coordinator then follows up: it reads the thread and tells you the outcome, or starts the next step. Turn this off per project (**Follow up on finished threads**); Settings caps it per hour so two agents can't ping each other forever.
+- **Same rules everywhere:** a thread is an ordinary chat, so budgets, step and time caps, approvals, contracts, git checkpoints and Evolve reviews all apply. Approvals and questions stay in the thread; the coordinator points you there but can't approve for you. Threads can't start threads.
+- **Limits:** at most 3 threads run at once by default (Settings → Long tasks); more wait in a queue.
+- **Every chat in a project is a thread**, including chats from before threads existed. A chat you open yourself (**New thread** in the project settings, or a new chat with the project picked) shows in the rail and the coordinator is told how it ended, without a card or a follow-up.
+- **Tasks:** each run of a scheduled task in a project is a coordinator thread, so it reports to the coordinator.
+- Opening a project opens its coordinator chat; the **Settings** button there holds the project's instructions, files, repos, tasks and threads.
+
 ### YOLO mode
 
 By default Syph asks before running shell commands (PowerShell on Windows), creating Tasks or using MCP tools. Click **Ask first** in the chat box to switch to **YOLO on**, or use **Settings → Tool approvals**. With YOLO on, those tools run without asking, and any that are already waiting run straight away. Scheduled Tasks have their own **YOLO for scheduled Tasks** switch, off by default, because nobody is watching them.
@@ -33,6 +45,7 @@ By default Syph asks before running shell commands (PowerShell on Windows), crea
 Open **Connectors** in the sidebar.
 
 - **Google Workspace** lets the agent work in Gmail, Drive, Docs, Sheets, Slides, Calendar, Contacts and Tasks. Google requires your own free OAuth client (about five minutes, once). The card walks you through it: create a Google Cloud project, turn on the APIs, create a **Desktop app** client, paste the Client ID and secret, then press **Sign in with Google**. Sign-in happens in your browser and comes back to Syph on its own.
+- **Several Google accounts.** Press **Add another Google account** to connect a second (or third) mailbox, such as personal and work. Every Google tool then takes an `account` argument (the address, or a unique part like `work`); without it the agent uses the default account, which you pick with **Make default**. Read-only tools also take `all`, so "any unread mail today?" checks every inbox. **Remove** signs out one account.
 - Reading (search mail, read docs, list events) runs freely. Sending mail, creating files and events, or changing anything asks first, unless YOLO is on. `google_api` reaches any other Google API with the same sign-in.
 - **GitHub** is built in. Paste a personal access token (the card links to a GitHub page with the right scopes ticked) and Syph can list your repositories, clone them, pull, commit, push to main, open pull requests and call any GitHub API. A GitHub connector Syph wrote for you earlier is replaced by this one, and its token carries over.
 - **Any other app:** ask in chat, e.g. "connect my Notion" or "add a connector for the Linear API". Syph writes the connector (you approve it), then its card appears here for you to add the key or sign in.
