@@ -46,14 +46,6 @@ jobs:
             xcrun simctl launch "$DEV" app.syph.ios -syphDemoTab $tab
             sleep 7; xcrun simctl io "$DEV" screenshot "shots/$tab.png"
           done
-      - name: Thumbnails in the log (for review without downloading the artifact)
-        run: |
-          mkdir -p thumbs
-          for f in shots/*.png; do
-            n=$(basename "$f" .png)
-            sips -Z 360 -s format jpeg -s formatOptions 45 "$f" --out "thumbs/$n.jpg" >/dev/null
-            echo "THUMB $n $(base64 -i "thumbs/$n.jpg" | tr -d '\n')"
-          done
       - uses: actions/upload-artifact@v4
         with:
           name: screenshots
