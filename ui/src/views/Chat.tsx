@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, AtSign, Plus, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, Clock, Code2, Copy, CornerDownRight, Files, Flag, FlaskConical, FolderClosed, Image as ImageIcon, Lightbulb, LayoutTemplate, ListChecks, Loader2, Moon, Paperclip, Pencil, RotateCcw, ShieldQuestion, Slash, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Wrench, X, Zap } from "lucide-react";
+import { ArrowUp, AtSign, Plus, Settings, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, Clock, Code2, Copy, CornerDownRight, Files, Flag, FlaskConical, FolderClosed, Image as ImageIcon, Lightbulb, LayoutTemplate, ListChecks, Loader2, Moon, Paperclip, Pencil, RotateCcw, ShieldQuestion, Slash, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Wrench, X, Zap } from "lucide-react";
 import { Markdown } from "../components/Markdown";
 import { Mark } from "../components/Logo";
 import { CellLoader } from "../components/CellLoader";
@@ -661,8 +661,8 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
         <span className="title ellipsis">{role === "coordinator" ? <>{project?.name ?? chat?.title} <span className="hint coord-tag">Coordinator</span></> : chat?.title && chat.title !== "New chat" ? chat.title : ""}</span>
         <div className="spacer" />
         {role ? (
-          <button className="pill on" onClick={() => projectId && go({ kind: "projects", projectId })} title="Open the project page: instructions, files, tasks and settings">
-            <FolderClosed size={15} /> <span className="ellipsis pill-label">{project?.name ?? "Project"}</span>
+          <button className="pill" onClick={() => projectId && go({ kind: "projects", projectId })} title="Project settings: instructions, files, repos, tasks and threads">
+            <Settings size={15} /> <span className="pill-label">Settings</span>
           </button>
         ) : (
         <div className="model-menu">
