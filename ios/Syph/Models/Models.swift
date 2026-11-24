@@ -120,6 +120,50 @@ struct Turn: Codable, Identifiable, Hashable, Sendable {
     var threadUpdate: ThreadUpdate?
     /// A turn Syph started for the coordinator after a thread update (not typed by the user).
     var auto: Bool?
+    /// The agent stopped to ask you something (ask_user): answer with a choice or in your own words.
+    var question: UserQuestion?
+    /// The run failed for a reason with its own card (the provider ran out of credit).
+    var failure: TurnFailure?
+    /// Files sent with this message.
+    var attachments: [Attachment]?
+    /// Messages you sent while it worked.
+    var steering: [String]?
+    /// Why a long run stopped: done, budget, repeated_error, question or checks_failed.
+    var stopReason: String?
+    var usage: TurnUsage?
+    /// Written on this phone while it had no computer, and not synced yet.
+    var local: Bool?
+}
+
+struct UserQuestion: Codable, Hashable, Sendable {
+    var question: String
+    var options: [String]
+    /// "choice" (default) or "model": pick the model a thread should start with.
+    var kind: String?
+    var recommendedModel: String?
+    var pendingStart: Bool?
+}
+
+struct TurnFailure: Codable, Hashable, Sendable {
+    /// "credits".
+    var kind: String
+    var provider: String
+    var affordable: Double?
+}
+
+struct TurnUsage: Codable, Hashable, Sendable {
+    var promptTokens: Double?
+    var completionTokens: Double?
+    var costUsd: Double?
+}
+
+struct Attachment: Codable, Hashable, Sendable, Identifiable {
+    var name: String
+    var path: String
+    /// image, document, text or other.
+    var kind: String
+    var size: Double
+    var id: String { path }
 }
 
 /// A card Syph posts in a project's coordinator chat when one of its threads ends or needs you.
@@ -181,6 +225,11 @@ struct ChatSummary: Codable, Identifiable, Hashable, Sendable {
     /// "coordinator" for a project's main chat, "thread" for a chat it started.
     var role: String?
     var parentId: String?
+    /// Who started a thread: coordinator, user or task.
+    var origin: String?
+    var threadState: String?
+    var summary: String?
+    var resolved: Bool?
 }
 
 struct Chat: Codable, Identifiable, Hashable, Sendable {
@@ -193,6 +242,9 @@ struct Chat: Codable, Identifiable, Hashable, Sendable {
     var repos: [RepoLink]?
     var activeRepo: String?
     var running: Bool?
+    var role: String?
+    var parentId: String?
+    var threadState: String?
 }
 
 // MARK: - Repos & GitHub
@@ -283,6 +335,8 @@ struct Project: Codable, Identifiable, Hashable, Sendable {
     var taskCount: Int?
     var folder: String?
     var repos: [RepoLink]?
+    var coordinatorChatId: String?
+    var coordinatorWake: Bool?
 }
 
 struct ProjectDetail: Codable, Identifiable, Hashable, Sendable {
@@ -297,7 +351,11 @@ struct ProjectDetail: Codable, Identifiable, Hashable, Sendable {
     var files: [String]
     var chats: [ChatSummary]
     var tasks: [SyphTask]
+    var spend: ProjectSpend?
+    var coordinatorWake: Bool?
 }
+
+struct ProjectSpend: Codable, Hashable, Sendable { var today: Double; var total: Double }
 
 // MARK: - Tasks
 
@@ -438,6 +496,10 @@ struct Defaults: Codable, Hashable, Sendable {
     var taskModel: String
     var reflectorModel: String
     var judgeModel: String
+    /// Model for frontend design work (the frontend-design skill).
+    var frontendModel: String?
+    /// auto, low, medium, high, xhigh or max.
+    var effort: String?
 
     subscript(key: String) -> String {
         switch key {
@@ -447,7 +509,12 @@ struct Defaults: Codable, Hashable, Sendable {
         default: return judgeModel
         }
     }
-    var json: JSONValue { ["chatModel": .string(chatModel), "taskModel": .string(taskModel), "reflectorModel": .string(reflectorModel), "judgeModel": .string(judgeModel)] }
+    var json: JSONValue {
+        var o: [String: JSONValue] = ["chatModel": .string(chatModel), "taskModel": .string(taskModel), "reflectorModel": .string(reflectorModel), "judgeModel": .string(judgeModel)]
+        if let frontendModel { o["frontendModel"] = .string(frontendModel) }
+        if let effort { o["effort"] = .string(effort) }
+        return .object(o)
+    }
 }
 
 struct Budgets: Codable, Hashable, Sendable {
@@ -476,6 +543,8 @@ struct Config: Codable, Hashable, Sendable {
     var evolve: EvolveConfig
     var killSwitch: Bool
     var hasOpenRouterKey: Bool
+    var hasMiniMaxKey: Bool?
+    var hasGeminiKey: Bool?
 }
 
 struct Spend: Codable, Hashable, Sendable {
@@ -567,9 +636,19 @@ struct Connector: Codable, Hashable, Sendable, Identifiable {
     var state: String
     var error: String?
     var account: String?
+    var multiAccount: Bool?
+    /// Every signed-in account, the default first (Google can have several).
+    var accounts: [ConnectorAccount]?
     var fields: [ConnectorField]
     var tools: [ConnectorTool]
     var setup: String?
+}
+
+struct ConnectorAccount: Codable, Hashable, Sendable, Identifiable {
+    var account: String
+    var `default`: Bool
+    var signedIn: Bool
+    var id: String { account }
 }
 
 struct ExportResult: Codable, Sendable {
@@ -608,6 +687,9 @@ struct AgentEvent: Codable, Sendable {
     var files: [FileRef]?
     /// `plan`: the agent's checklist.
     var steps: [PlanStep]?
+    /// `run_end`: the agent stopped to ask this.
+    var question: UserQuestion?
+    var stopReason: String?
 
     init(type: String) { self.type = type }
 }
@@ -616,4 +698,113 @@ struct AgentEvent: Codable, Sendable {
 struct ServerEvent: Codable, Sendable {
     var type: String
     var job: Job?
+}
+
+// MARK: - Skills
+
+struct SkillInfo: Codable, Hashable, Sendable, Identifiable {
+    struct Use: Codable, Hashable, Sendable { var uses: Int; var lastUsed: String? }
+    struct Pending: Codable, Hashable, Sendable { var id: String; var title: String }
+    var name: String
+    var description: String
+    var active: Bool
+    var body: String
+    var files: [String]?
+    var usage: Use?
+    var changedAt: String?
+    var pending: [Pending]?
+    var versions: Int?
+    /// agent, reflector, user or default.
+    var createdBy: String?
+    var id: String { name }
+}
+
+struct SkillAudit: Codable, Hashable, Sendable {
+    struct Dup: Codable, Hashable, Sendable { var skills: [String]; var similarity: Double }
+    struct Unused: Codable, Hashable, Sendable { var name: String; var ageDays: Double }
+    var duplicates: [Dup]
+    var unused: [Unused]
+    var inactive: [String]
+    var empty: [String]
+}
+
+struct SkillsResponse: Codable, Sendable {
+    var skills: [SkillInfo]
+    var audit: SkillAudit?
+}
+
+// MARK: - Folders and the terminal (on the computer)
+
+struct FolderLink: Codable, Hashable, Sendable, Identifiable {
+    var path: String
+    var name: String
+    /// read or write.
+    var access: String
+    var linkedAt: String?
+    /// chat, coordinator or project.
+    var scope: String
+    var exists: Bool
+    var id: String { path }
+}
+
+struct TerminalEntry: Codable, Hashable, Sendable, Identifiable {
+    var id: String
+    var chatId: String?
+    var command: String
+    var cwd: String
+    var shell: String
+    var background: Bool?
+    /// running, done, failed, stopped or timeout.
+    var status: String
+    var exitCode: JSONValue?
+    var startedAt: String
+    var endedAt: String?
+    var output: String
+}
+
+struct TerminalState: Codable, Sendable {
+    var entries: [TerminalEntry]
+    var session: Bool
+    var mode: String
+    var yolo: Bool
+    var shell: String
+}
+
+// MARK: - Provider usage
+
+struct UsageMeter: Codable, Hashable, Sendable {
+    var label: String
+    var used: Double
+    var total: Double
+    /// requests, usd or percent.
+    var unit: String
+    /// ms since 1970.
+    var resetsAt: Double?
+
+    var fraction: Double { total > 0 ? min(1, max(0, used / total)) : 0 }
+    var left: String {
+        switch unit {
+        case "percent": return "\(Int(max(0, total - used).rounded()))% left"
+        case "usd": return String(format: "$%.2f left of $%.2f", max(0, total - used), total)
+        default: return "\(Int(max(0, total - used)).formatted()) of \(Int(total).formatted()) requests left"
+        }
+    }
+}
+
+struct ProviderUsage: Codable, Hashable, Sendable {
+    var provider: String
+    var meters: [UsageMeter]
+    var checkedAt: Double?
+    var error: String?
+
+    /// The meter closest to running out.
+    var tightest: UsageMeter? { meters.max { $0.fraction < $1.fraction } }
+}
+
+struct ChatHit: Codable, Hashable, Sendable, Identifiable {
+    var id: String
+    var title: String
+    var projectId: String?
+    var updatedAt: String
+    var snippet: String?
 }

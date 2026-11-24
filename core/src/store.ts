@@ -135,6 +135,45 @@ export function createChat(home: Home, input: { projectId?: string; title?: stri
   return c;
 }
 
+export interface PhoneTurn {
+  role: "user" | "assistant";
+  content: string;
+  model?: string;
+  createdAt?: string;
+  durationMs?: number;
+}
+
+/**
+ * Bring in a chat the iPhone app had while it worked without the computer. The same `phoneId` always
+ * lands on the same chat: a repeated sync replaces its turns, so nothing is duplicated. The model-facing
+ * history is rebuilt from the turns, so the chat carries on here as if it had started here.
+ */
+export function importPhoneChat(home: Home, input: { phoneId: string; title?: string; projectId?: string; model?: string; turns: PhoneTurn[] }): ChatRecord {
+  const phoneId = String(input.phoneId ?? "").trim();
+  if (!phoneId) throw new Error("A synced chat needs its phone id.");
+  const turns = (Array.isArray(input.turns) ? input.turns : [])
+    .filter((t) => (t?.role === "user" || t?.role === "assistant") && typeof t.content === "string")
+    .slice(-500)
+    .map((t) => ({
+      id: id("t_"),
+      role: t.role,
+      content: t.content,
+      ...(t.model ? { model: String(t.model) } : {}),
+      ...(typeof t.durationMs === "number" ? { durationMs: t.durationMs } : {}),
+      createdAt: typeof t.createdAt === "string" ? t.createdAt : now(),
+    }));
+  const existing = listChats(home).find((c) => c.phoneId === phoneId);
+  const projectId = input.projectId && getProject(home, input.projectId) ? input.projectId : undefined;
+  const c = existing ? getChat(home, existing.id)! : createChat(home, { projectId, title: input.title, model: input.model });
+  c.phoneId = phoneId;
+  if (input.title) c.title = String(input.title).slice(0, 200);
+  if (input.model) c.model = String(input.model);
+  c.turns = turns;
+  c.history = turns.map((t) => ({ role: t.role, content: t.content }));
+  saveChat(home, c);
+  return c;
+}
+
 export function deleteChat(home: Home, cid: string) {
   rmSync(home.path("chats", `${cid}.json`), { force: true });
 }

@@ -1,7 +1,7 @@
 import SwiftUI
 
 // Syph's iOS design language: near-black canvas, soft elevated cards, one cool accent,
-// big confident numerals (Revolut-style) and Apple's materials / Liquid Glass where available.
+// flat surfaces and the bundled Instrument Serif for titles, matching the desktop app.
 
 extension Color {
     init(hex: String) {
@@ -18,23 +18,33 @@ extension Color {
 }
 
 enum Palette {
-    static let bg = Color.dynamic("#08080A", "#F4F4F1")
-    static let surface = Color.dynamic("#131316", "#FFFFFF")
-    static let surface2 = Color.dynamic("#1B1B1F", "#ECECE8")
-    static let surface3 = Color.dynamic("#26262B", "#E2E2DD")
-    static let stroke = Color.dynamic("#FFFFFF", "#000000").opacity(0.07)
-    static let text = Color.dynamic("#F2F2EE", "#141413")
-    static let muted = Color.dynamic("#9A9A93", "#6B6A63")
-    static let faint = Color.dynamic("#5E5E58", "#A3A198")
-    static let accent = Color.dynamic("#9EC7FF", "#2F5FA8")
-    static let accent2 = Color.dynamic("#B7A6FF", "#5B48C2")
-    static let ok = Color.dynamic("#7FD4A0", "#2E7D4F")
-    static let warn = Color.dynamic("#F0C674", "#946B12")
-    static let err = Color.dynamic("#FF8A7A", "#B3402F")
-    static let addBg = Color.dynamic("#7FD4A0", "#2E7D4F").opacity(0.12)
-    static let delBg = Color.dynamic("#FF8A7A", "#B3402F").opacity(0.12)
+    // The desktop's palette (ui/src/styles.css): restrained, near-monochrome, one cool accent, no gradients.
+    static let bg = Color.dynamic("#0D0D0C", "#F8F7F3")
+    static let surface = Color.dynamic("#151514", "#F0EFEA")
+    static let surface2 = Color.dynamic("#1C1C1B", "#E8E7E1")
+    static let surface3 = Color.dynamic("#262624", "#DEDCD5")
+    static let stroke = Color.dynamic("#2A2A28", "#E0DED7")
+    static let text = Color.dynamic("#ECEBE6", "#191917")
+    static let muted = Color.dynamic("#98978F", "#6B6A63")
+    static let faint = Color.dynamic("#5C5B56", "#A3A198")
+    static let accent = Color.dynamic("#A9B8CC", "#3F5573")
+    /// Kept for older call sites; the desktop has a single accent.
+    static let accent2 = accent
+    static let ok = Color.dynamic("#8FB59A", "#3E7A51")
+    static let warn = Color.dynamic("#D3B673", "#93701F")
+    static let err = Color.dynamic("#D68A7F", "#A64B3F")
+    static let addBg = Color.dynamic("#8FB59A", "#3E7A51").opacity(0.10)
+    static let delBg = Color.dynamic("#D68A7F", "#A64B3F").opacity(0.10)
 
-    static let accentGradient = LinearGradient(colors: [accent, accent2], startPoint: .topLeading, endPoint: .bottomTrailing)
+    /// Flat, like the desktop. Kept as a gradient type so existing fills and strokes still compile.
+    static let accentGradient = LinearGradient(colors: [accent, accent], startPoint: .top, endPoint: .bottom)
+}
+
+/// The desktop's display serif (Instrument Serif), bundled with the app.
+extension Font {
+    static func serif(_ size: CGFloat, relativeTo style: Font.TextStyle = .largeTitle) -> Font {
+        .custom("InstrumentSerif-Regular", size: size, relativeTo: style)
+    }
 }
 
 enum Haptic {
@@ -46,36 +56,10 @@ enum Haptic {
 
 // MARK: - Backdrop
 
-/// The app canvas: deep black with a slow, soft aurora at the top, like a premium banking app.
+/// The app canvas: the desktop's flat background. `tint` is kept for older call sites.
 struct Backdrop: View {
     var tint: Color = Palette.accent
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        ZStack(alignment: .top) {
-            Palette.bg
-            if scheme == .dark {
-                TimelineView(.animation(minimumInterval: 1 / 20)) { tl in
-                    let t = tl.date.timeIntervalSinceReferenceDate
-                    MeshGradient(width: 3, height: 3, points: [
-                        [0, 0], [0.5, 0], [1, 0],
-                        [Float(0.15 + 0.08 * sin(t / 6)), 0.45], [Float(0.55 + 0.1 * cos(t / 7)), Float(0.4 + 0.08 * sin(t / 5))], [1, Float(0.5 + 0.06 * cos(t / 8))],
-                        [0, 1], [0.5, 1], [1, 1],
-                    ], colors: [
-                        tint.opacity(0.30), Palette.accent2.opacity(0.22), tint.opacity(0.14),
-                        Palette.accent2.opacity(0.10), tint.opacity(0.10), Palette.accent2.opacity(0.06),
-                        .clear, .clear, .clear,
-                    ])
-                }
-                .frame(height: 420)
-                .blur(radius: 60)
-                .opacity(0.9)
-            } else {
-                LinearGradient(colors: [tint.opacity(0.10), .clear], startPoint: .top, endPoint: .bottom).frame(height: 360)
-            }
-        }
-        .ignoresSafeArea()
-    }
+    var body: some View { Palette.bg.ignoresSafeArea() }
 }
 
 // MARK: - Surfaces
@@ -94,27 +78,16 @@ struct CardStyle: ViewModifier {
 extension View {
     func card(padding: CGFloat = 18, radius: CGFloat = 24) -> some View { modifier(CardStyle(padding: padding, radius: radius)) }
 
-    /// Liquid Glass on iOS 26, an ultra-thin material before that.
-    @ViewBuilder func glass(radius: CGFloat = 26, interactive: Bool = false) -> some View {
-        if #available(iOS 26.0, *) {
-            if interactive {
-                self.glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            } else {
-                self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            }
-        } else {
-            self
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Palette.stroke))
-        }
+    /// A raised surface, flat like the desktop's composer and cards: the surface colour with a hairline border.
+    /// (Named for the Liquid Glass it used to be; `interactive` is kept for older call sites.)
+    func glass(radius: CGFloat = 26, interactive: Bool = false) -> some View {
+        self
+            .background(Palette.surface, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Palette.stroke))
     }
 
-    @ViewBuilder func glassCapsule() -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: Capsule())
-        } else {
-            self.background(.ultraThinMaterial, in: Capsule()).overlay(Capsule().strokeBorder(Palette.stroke))
-        }
+    func glassCapsule() -> some View {
+        self.background(Palette.surface, in: Capsule()).overlay(Capsule().strokeBorder(Palette.stroke))
     }
 
     func sectionLabel() -> some View {

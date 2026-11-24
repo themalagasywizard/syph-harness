@@ -27,12 +27,22 @@ private struct ChatScreen: View {
     @State private var showModels = false
     @State private var linkingRepo = false
     @State private var showFiles = false
+    @State private var pickPhotos = false
+    @State private var pickFiles = false
+    @State private var showThreads = false
+    @State private var showFolders = false
+    @State private var showTerminal = false
 
-    private static let suggestions: [(String, String)] = [
-        ("Turn what we did today into a reusable skill", "lightbulb"),
-        ("Schedule a daily summary of my research notes", "clock"),
-        ("Review your system prompt and suggest one improvement", "sparkles"),
-        ("Write a script that checks if my Ollama server is up", "chevron.left.forwardslash.chevron.right"),
+    /// The desktop's new-chat pills (ui/src/views/Chat.tsx).
+    private static let pills: [(label: String, prompt: String, icon: String)] = [
+        ("Turn work into a skill", "Turn what we did today into a reusable skill", "lightbulb"),
+        ("Schedule a task", "Schedule a daily summary of my research notes", "clock"),
+        ("Improve my prompt", "Review your system prompt and suggest one improvement", "sparkles"),
+    ]
+    private static let coordinatorPills: [(label: String, prompt: String, icon: String)] = [
+        ("Project status", "Give me a quick overview of this project's current state and threads.", "square.3.layers.3d"),
+        ("Inspect files", "Inspect the files and folders in this project and summarize the architecture.", "folder.badge.questionmark"),
+        ("Plan parallel work", "Help me break down our next steps into parallel worker threads.", "arrow.triangle.branch"),
     ]
 
     var body: some View {
@@ -41,6 +51,11 @@ private struct ChatScreen: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
             .modifier(ChatSheets(vm: vm, showModels: $showModels, linkingRepo: $linkingRepo, showFiles: $showFiles))
+            .modifier(AttachPickers(photos: $pickPhotos, files: $pickFiles) { name, data in Task { await vm.attach(name: name, data: data) } })
+            .sheet(isPresented: $showThreads) { ThreadsSheet(vm: vm).presentationDetents([.medium, .large]) }
+            .sheet(isPresented: $showFolders) { FoldersSheet(vm: vm).presentationDetents([.medium, .large]) }
+            .sheet(isPresented: $showTerminal) { if let id = vm.chatId { TerminalSheet(chatId: id).presentationDetents([.medium, .large]) } }
+            .task(id: app.threadsTick) { if vm.isCoordinator || vm.isThread { await vm.loadThreads() } }
             .task { await vm.load() }
             .onChange(of: app.state?.config.defaults.chatModel) { _, m in if vm.model == nil { vm.model = m } }
             .onChange(of: vm.projectId) { Task { await vm.loadRepos() } }
@@ -75,14 +90,17 @@ private struct ChatScreen: View {
                                 Label("Following up on the thread update", systemImage: "arrow.triangle.branch")
                                     .font(.caption).foregroundStyle(Palette.faint).id(t.id)
                             } else if t.role == .user {
-                                UserBubble(text: t.content).id(t.id)
+                                UserBubble(text: t.content, attachments: t.attachments ?? []).id(t.id)
                                     .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
                             } else {
-                                AssistantTurnView(turn: t, chatId: vm.chat?.id, duration: vm.duration(of: t)).id(t.id)
+                                AssistantTurnView(turn: t, chatId: vm.chat?.id, duration: vm.duration(of: t),
+                                                  last: t.id == vm.turns.last?.id && vm.live == nil, settle: t.id == vm.justFinished,
+                                                  onSend: { text in Task { await vm.send(text) } }, onRetry: { Task { await vm.retry() } },
+                                                  onPickModel: { m, start in Task { await vm.pickModel(m, pendingStart: start) } }).id(t.id)
                             }
                         }
                         if let live = vm.live {
-                            AssistantTurnView(turn: live, chatId: nil, streaming: true, approval: vm.approval, note: vm.note, onApprove: vm.answer, startedAt: vm.liveStarted)
+                            AssistantTurnView(turn: live, chatId: nil, streaming: true, approval: vm.approval, note: vm.note, onApprove: vm.answer, onAlways: vm.allowAlways, startedAt: vm.liveStarted, steering: vm.steered)
                                 .id("live")
                         }
                     }
@@ -105,23 +123,59 @@ private struct ChatScreen: View {
             }
             ToolbarItem(placement: .principal) {
                 Button { showModels = true } label: {
-                    HStack(spacing: 5) {
-                        Text(Fmt.model(vm.model).isEmpty ? "Syph" : Fmt.model(vm.model)).lineLimit(1)
-                        Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(Palette.muted)
+                    VStack(spacing: 1) {
+                        HStack(spacing: 5) {
+                            Text(Fmt.model(vm.model).isEmpty ? "Syph" : Fmt.model(vm.model)).lineLimit(1)
+                            if let e = app.state?.config.defaults.effort, e != "auto", !Effort.levels(vm.model).isEmpty {
+                                Text(Effort.label(e)).font(.caption2.weight(.bold)).foregroundStyle(Palette.muted)
+                                    .padding(.horizontal, 5).padding(.vertical, 1).background(Palette.surface3, in: Capsule())
+                            }
+                            Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(Palette.muted)
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Palette.text)
+                        if let sub = contextLine {
+                            Text(sub).font(.caption2.weight(.medium)).foregroundStyle(Palette.muted).lineLimit(1)
+                        }
                     }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Palette.text)
-                    .frame(maxWidth: 220)
+                    .frame(maxWidth: 230)
                 }
                 .accessibilityLabel("Model: \(Fmt.model(vm.model))")
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { app.newChat(projectId: vm.projectId) } label: {
-                    Image(systemName: "square.and.pencil").font(.body.weight(.semibold))
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if vm.isThread, let parent = vm.chat?.parentId {
+                    Button { Haptic.tap(); app.openChat(parent) } label: {
+                        Image(systemName: "arrow.uturn.backward.circle").font(.body.weight(.semibold))
+                    }
+                    .accessibilityLabel("Back to the coordinator")
                 }
-                .accessibilityLabel("New chat")
-                .disabled(vm.isEmpty)
+                if vm.isCoordinator || vm.isThread {
+                    Button { Haptic.tap(); showThreads = true } label: {
+                        let waiting = vm.threads?.threads.filter { $0.resolved != true && ($0.threadState == "blocked" || $0.status == "waiting") }.count ?? 0
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.body.weight(.semibold))
+                            .overlay(alignment: .topTrailing) {
+                                if waiting > 0 { Circle().fill(Palette.warn).frame(width: 8, height: 8).offset(x: 4, y: -3) }
+                            }
+                    }
+                    .accessibilityLabel("Threads")
+                } else {
+                    Button { app.newChat(projectId: vm.projectId) } label: {
+                        Image(systemName: "square.and.pencil").font(.body.weight(.semibold))
+                    }
+                    .accessibilityLabel("New chat")
+                    .disabled(vm.isEmpty)
+                }
             }
+    }
+
+    /// "Research · Coordinator", "Research · thread", or "On this iPhone" under the model name.
+    private var contextLine: String? {
+        let p = vm.project?.name
+        if vm.isCoordinator { return [p, "Coordinator"].compactMap { $0 }.joined(separator: " · ") }
+        if vm.isThread { return [p, "Thread"].compactMap { $0 }.joined(separator: " · ") }
+        if app.isStandalone { return vm.readOnly ? "From your computer · read only" : "On this iPhone" }
+        return p
     }
 
     private func scroll(_ proxy: ScrollViewProxy, animated: Bool = false) {
@@ -131,57 +185,51 @@ private struct ChatScreen: View {
 
     // MARK: Empty state
 
+    /// Like the desktop's new-chat page: the living logo, a serif greeting and three pills, centred.
     private var hero: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("\(Fmt.greeting())")
-                .font(.system(size: 40, weight: .semibold, design: .rounded))
-                .foregroundStyle(Palette.accentGradient)
-            Text("What should we work on?")
-                .font(.system(size: 40, weight: .semibold, design: .rounded))
-                .foregroundStyle(Palette.faint)
-            if let p = vm.project {
-                HStack(spacing: 6) {
-                    Circle().fill(Color(hex: p.color ?? "#888")).frame(width: 8, height: 8)
-                    Text("In \(p.name)").font(.subheadline.weight(.medium)).foregroundStyle(Palette.muted)
-                }
-                .padding(.top, 8)
+        VStack(spacing: 14) {
+            LivingMark(size: 64, mode: .streaming)
+                .padding(.bottom, 6)
+            if vm.isCoordinator {
+                HeroEyebrow(icon: "arrow.triangle.branch", text: "Coordinator")
+                Text(vm.project?.name ?? "Project").font(.serif(40)).heroTitle()
+            } else {
+                if let p = vm.project { HeroEyebrow(icon: "folder", text: p.name) }
+                Text("\(Fmt.greeting()).").font(.serif(40)).heroTitle()
             }
+            FlowLayout(spacing: 8, centered: true) {
+                ForEach(vm.isCoordinator ? Self.coordinatorPills : Self.pills, id: \.label) { p in
+                    Button { Task { await vm.send(p.prompt) } } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: p.icon).font(.system(size: 13)).foregroundStyle(Palette.faint)
+                            Text(p.label).font(.system(size: 14)).foregroundStyle(Palette.muted)
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(height: 36)
+                        .background(Palette.surface.opacity(0.65), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Palette.stroke))
+                    }
+                    .buttonStyle(.pressable)
+                }
+            }
+            .padding(.top, 12)
         }
-        .padding(.top, 70)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
+        .padding(.bottom, 40)
+        .containerRelativeFrame(.vertical, alignment: .center)
     }
 
     // MARK: Chat bar
 
     private var composer: some View {
         VStack(spacing: 10) {
-            if vm.isEmpty && vm.draft.isEmpty && !focused {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(Self.suggestions, id: \.0) { s in
-                            Button { Task { await vm.send(s.0) } } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: s.1).foregroundStyle(Palette.accent)
-                                    Text(s.0).foregroundStyle(Palette.text).lineLimit(2).multilineTextAlignment(.leading)
-                                }
-                                .font(.subheadline.weight(.medium))
-                                .frame(width: 210, alignment: .leading)
-                                .padding(.horizontal, 14).padding(.vertical, 12)
-                                .glass(radius: 20, interactive: true)
-                            }
-                            .buttonStyle(.pressable)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
             Group {
                 if let e = vm.error { ErrorBanner(text: e).transition(.move(edge: .bottom).combined(with: .opacity)) }
                 if vm.noKey {
                     HStack(spacing: 10) {
                         Image(systemName: "key.fill").foregroundStyle(Palette.warn)
-                        Text("Add your OpenRouter key in Settings to chat with \(Fmt.model(vm.model)).").font(.footnote)
+                        Text("Add your \(Fmt.providerLabel(vm.keyProvider)) key in Settings\(app.isStandalone ? " on this phone" : "") to chat with \(Fmt.model(vm.model)).").font(.footnote)
                         Spacer(minLength: 0)
                         Button("Open") { app.open(.settings) }.font(.footnote.weight(.semibold))
                     }
@@ -192,10 +240,28 @@ private struct ChatScreen: View {
             .padding(.horizontal, 12)
 
             if !vm.repos.isEmpty { RepoChip(vm: vm) { linkingRepo = true } }
+            if !vm.attachments.isEmpty || vm.uploading {
+                HStack(spacing: 8) {
+                    if vm.uploading { ProgressView().controlSize(.small) }
+                    AttachmentChips(items: vm.attachments, onRemove: vm.removeAttachment)
+                }
+                .padding(.horizontal, 16)
+            }
 
+            if vm.readOnly {
+                VStack(spacing: 10) {
+                    Text("This chat is on your computer. It syncs when you reconnect; you can also carry it on here.")
+                        .font(.footnote).foregroundStyle(Palette.muted).multilineTextAlignment(.center)
+                    Button { Task { await vm.continueOnPhone() } } label: {
+                        Label("Continue on this phone", systemImage: "iphone").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.primary)
+                }
+                .padding(.horizontal, 16)
+            } else {
             HStack(alignment: .bottom, spacing: 8) {
                 plusMenu
-                TextField(vm.project.map { "Ask Syph in \($0.name)" } ?? "Ask Syph", text: $vm.draft, axis: .vertical)
+                TextField(vm.live != nil ? "Tell Syph something while it works" : vm.project.map { "Ask Syph in \($0.name)" } ?? (app.isStandalone ? "Ask Syph on this phone" : "Ask Syph"), text: $vm.draft, axis: .vertical)
                     .lineLimit(1...6)
                     .focused($focused)
                     .font(.body)
@@ -209,10 +275,12 @@ private struct ChatScreen: View {
             .padding(.leading, 6)
             .padding(.trailing, 6)
             .padding(.vertical, 6)
-            .glass(radius: 26)
+            .glass(radius: 24)
             .padding(.horizontal, 12)
+            }
             if vm.live != nil {
-                Text("Keeps running on Syph if you leave this chat.").font(.caption2).foregroundStyle(Palette.faint)
+                Text(app.isStandalone ? "Keep this chat open while it answers on the phone." : app.capabilities.computer ? "Type to steer it while it works. Keeps running on Syph if you leave." : "")
+                    .font(.caption2).foregroundStyle(Palette.faint)
             }
         }
         .padding(.bottom, 6)
@@ -223,6 +291,12 @@ private struct ChatScreen: View {
 
     private var plusMenu: some View {
         Menu {
+            Section("Attach") {
+                Button { pickPhotos = true } label: { Label("Photos", systemImage: "photo.on.rectangle") }
+                Button { pickFiles = true } label: { Label("Files", systemImage: "paperclip") }
+            }
+            .disabled(!app.capabilities.computer)
+            if app.capabilities.computer {
             Section("Project") {
                 Button { vm.projectId = nil } label: { Label("No project", systemImage: vm.projectId == nil ? "checkmark" : "circle") }
                 ForEach(app.state?.projects ?? []) { p in
@@ -231,6 +305,12 @@ private struct ChatScreen: View {
             }
             Section("Work on") {
                 Button { linkingRepo = true } label: { Label(vm.repos.isEmpty ? "Link a GitHub repo" : "Link another repo", systemImage: "shippingbox") }
+                Button { showFolders = true } label: {
+                    Label(vm.folders.isEmpty ? "Folders on your computer" : "Folders (\(vm.folders.count))", systemImage: "folder.badge.gearshape")
+                }
+                if vm.chatId != nil {
+                    Button { showTerminal = true } label: { Label("Terminal", systemImage: "terminal") }
+                }
                 if hasFiles {
                     Button { showFiles = true } label: { Label("Files in this chat", systemImage: "doc.on.doc") }
                 }
@@ -239,6 +319,7 @@ private struct ChatScreen: View {
                 Button(action: vm.toggleYolo) {
                     Label(app.yolo ? "YOLO on: tools run without asking" : "Ask first before running tools", systemImage: app.yolo ? "bolt.fill" : "hand.raised")
                 }
+            }
             }
             Section {
                 Button { showModels = true } label: { Label("Model: \(Fmt.model(vm.model))", systemImage: "cpu") }
@@ -257,20 +338,26 @@ private struct ChatScreen: View {
     private var hasFiles: Bool { vm.chatId != nil && vm.turns.contains { !($0.files ?? []).isEmpty } }
 
     private var sendButton: some View {
-        let ready = !vm.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let typed = !vm.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let ready = typed || !vm.attachments.isEmpty
+        let running = vm.live != nil
+        // While it works: a typed message steers it (on the computer); an empty box stops it.
+        let steer = running && typed && app.capabilities.computer
         return Button {
-            if vm.live != nil { vm.stop() } else { Task { await vm.send() } }
+            if steer { Task { await vm.steer() } }
+            else if running { vm.stop() }
+            else { Task { await vm.send() } }
         } label: {
-            Image(systemName: vm.live != nil ? "stop.fill" : "arrow.up")
-                .font(.system(size: vm.live != nil ? 13 : 16, weight: .bold))
-                .foregroundStyle(ready || vm.live != nil ? Palette.bg : Palette.muted)
+            Image(systemName: steer ? "arrow.turn.down.right" : running ? "stop.fill" : "arrow.up")
+                .font(.system(size: running && !steer ? 13 : 16, weight: .bold))
+                .foregroundStyle(ready || running ? Palette.bg : Palette.muted)
                 .frame(width: 38, height: 38)
-                .background(ready || vm.live != nil ? Palette.text : Palette.surface3, in: Circle())
+                .background(ready || running ? Palette.text : Palette.surface3, in: Circle())
                 .contentTransition(.symbolEffect(.replace))
         }
-        .disabled(!ready && vm.live == nil)
+        .disabled((!ready && !running) || vm.uploading)
         .animation(.snappy, value: ready)
-        .accessibilityLabel(vm.live != nil ? "Stop" : "Send")
+        .accessibilityLabel(steer ? "Send while it works" : running ? "Stop" : "Send")
     }
 }
 
@@ -292,14 +379,23 @@ private struct ChatSheets: ViewModifier {
                 if let id = vm.chatId { ChatFilesSheet(chatId: id).presentationDetents([.medium, .large]) }
             }
             .sheet(isPresented: $showModels) {
-                ModelPickerSheet(value: vm.model) { vm.model = $0 }.presentationDetents([.medium, .large])
+                ModelPickerSheet(value: vm.model, effort: true) { vm.model = $0; pushRecentModel($0) }.presentationDetents([.medium, .large])
             }
     }
 }
 
 struct UserBubble: View {
     var text: String
+    var attachments: [Attachment] = []
     var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            if !attachments.isEmpty {
+                HStack { Spacer(minLength: 50); AttachmentChips(items: attachments).fixedSize(horizontal: true, vertical: false) }
+            }
+            if !text.isEmpty { bubble }
+        }
+    }
+    private var bubble: some View {
         HStack {
             Spacer(minLength: 50)
             Text(text)
@@ -321,9 +417,18 @@ struct AssistantTurnView: View {
     var approval: PendingApproval?
     var note: String?
     var onApprove: ((Bool) -> Void)?
+    var onAlways: (() -> Void)? = nil
     /// How long the request took (finished turns), or when it started (the live turn).
     var duration: TimeInterval?
     var startedAt: Date?
+    var steering: [String] = []
+    /// The newest answer in the chat (its cards can be acted on).
+    var last = false
+    /// It just finished: its mark springs back into shape.
+    var settle = false
+    var onSend: ((String) -> Void)? = nil
+    var onRetry: (() -> Void)? = nil
+    var onPickModel: ((String, Bool) -> Void)? = nil
 
     @State private var rating: String?
     @State private var copied = false
@@ -341,7 +446,9 @@ struct AssistantTurnView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                if streaming { CellLoader(size: 22, mode: loaderMode) } else { SyphMark(size: 18, color: Palette.muted) }
+                if streaming { LivingMark(size: 22, mode: loaderMode, beat: turn.content.count, birth: true, color: approval != nil ? Palette.warn : Palette.text, glow: false) }
+                else if settle { LivingMark(size: 22, mode: .idle, birth: false, color: Palette.muted, glow: false, settle: true) }
+                else { SyphMark(size: 18, color: Palette.muted) }
                 Text("Syph").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.muted)
                 if streaming && approval == nil {
                     Text(turn.content.isEmpty ? "Thinking" : "Writing").font(.caption).foregroundStyle(Palette.faint)
@@ -351,18 +458,26 @@ struct AssistantTurnView: View {
             if let plan = turn.plan, !plan.isEmpty {
                 PlanChecklist(steps: plan, streaming: streaming)
             }
-            if let calls = turn.toolCalls, !calls.isEmpty {
+            if let calls = turn.toolCalls?.filter({ $0.name != "update_plan" && $0.name != "ask_user" }), !calls.isEmpty {
                 ToolChain(calls: calls, streaming: streaming, duration: duration, startedAt: startedAt)
             }
             if let note { Text(note).font(.footnote).foregroundStyle(Palette.muted).italic() }
-            if let approval { ApprovalCard(approval: approval, onAnswer: { onApprove?($0) }) }
+            if let approval { ApprovalCard(approval: approval, onAnswer: { onApprove?($0) }, onAlways: onAlways) }
+            let steered = streaming ? steering : (turn.steering ?? [])
+            if !steered.isEmpty { SteeringList(items: steered) }
 
-            if !turn.content.isEmpty {
+            if let f = turn.failure, f.kind == "credits", !streaming {
+                CreditsCard(failure: f, onRetry: last ? onRetry : nil)
+            } else if let q = turn.question, !streaming {
+                if hasIntro(q) { MarkdownView(text: turn.content).textSelection(.enabled) }
+                QuestionCard(question: q, disabled: !last, onAnswer: { onSend?($0) }, onPickModel: { m, s in onPickModel?(m, s) })
+            } else if !turn.content.isEmpty {
                 MarkdownView(text: turn.content + (streaming ? " ▍" : ""))
                     .textSelection(.enabled)
             } else if streaming && approval == nil {
                 TypingDots()
             }
+            if !streaming, last, let r = turn.stopReason { StopCard(reason: r, disabled: false) { onSend?($0) } }
 
             if let files = turn.files, !files.isEmpty { FileCards(files: files) }
 
@@ -377,6 +492,13 @@ struct AssistantTurnView: View {
         .onAppear { rating = turn.rating }
     }
 
+    /// The answer has text besides the question itself (an explanation above it).
+    private func hasIntro(_ q: UserQuestion) -> Bool {
+        let trimmed = turn.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bare = ([q.question] + q.options.map { "- \($0)" }).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed != bare && trimmed != q.question.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var actions: some View {
         HStack(spacing: 4) {
             iconButton(rating == "up" ? "hand.thumbsup.fill" : "hand.thumbsup", active: rating == "up") { rate("up") }
@@ -387,8 +509,16 @@ struct AssistantTurnView: View {
                 copied = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
             }
-            if turn.runId != nil, rating != nil, feedback == .none {
+            if turn.runId != nil, rating != nil, feedback == .none, turn.local != true {
                 iconButton("flask", active: false) { feedback = .open }
+            }
+            if last, turn.failure == nil, let onRetry {
+                iconButton("arrow.counterclockwise", active: false) { onRetry() }
+                    .accessibilityLabel("Send the last message again")
+            }
+            if turn.local == true {
+                Image(systemName: "iphone").font(.caption).foregroundStyle(Palette.faint).padding(.horizontal, 6)
+                    .accessibilityLabel("Answered on this phone")
             }
             Spacer()
             HStack(spacing: 6) {
@@ -601,6 +731,7 @@ struct ToolCallRow: View {
 struct ApprovalCard: View {
     var approval: PendingApproval
     var onAnswer: (Bool) -> Void
+    var onAlways: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -620,6 +751,10 @@ struct ApprovalCard: View {
             }
             HStack(spacing: 10) {
                 Button { onAnswer(false) } label: { Text("Deny").frame(maxWidth: .infinity) }.buttonStyle(.tonalCompact)
+                if let onAlways {
+                    Button { onAlways() } label: { Text("Always").frame(maxWidth: .infinity) }.buttonStyle(.tonalCompact)
+                        .accessibilityHint(approval.tool == "shell" ? "Run this exact command without asking from now on" : "Let \(approval.tool) run without asking from now on")
+                }
                 Button { onAnswer(true) } label: { Text("Allow").frame(maxWidth: .infinity) }.buttonStyle(.primaryCompact)
             }
         }
@@ -644,5 +779,27 @@ struct TypingDots: View {
             }
         }
         .padding(.vertical, 6)
+    }
+}
+
+/// The small pill above the new-chat title (a project's name, or "Coordinator").
+private struct HeroEyebrow: View {
+    var icon: String
+    var text: String
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 11))
+            Text(text).font(.system(size: 12, weight: .medium)).tracking(0.2)
+        }
+        .foregroundStyle(Palette.muted)
+        .padding(.horizontal, 11).padding(.vertical, 4)
+        .background(Palette.surface.opacity(0.75), in: Capsule())
+        .overlay(Capsule().strokeBorder(Palette.stroke))
+    }
+}
+
+private extension Text {
+    func heroTitle() -> some View {
+        self.tracking(-0.6).lineSpacing(2).foregroundStyle(Palette.text).lineLimit(2).minimumScaleFactor(0.7)
     }
 }

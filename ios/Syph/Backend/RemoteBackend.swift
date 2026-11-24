@@ -274,4 +274,80 @@ final class RemoteBackend: SyphBackend, @unchecked Sendable {
     func setUiEnabled(_ id: String, enabled: Bool) async throws -> UiState { try await call("POST", "/ui/\(enc(id))/enabled", ["enabled": .bool(enabled)]) }
     func setSafeMode(_ on: Bool) async throws -> UiState { try await call("PUT", "/ui/safe", ["on": .bool(on)]) }
     func removeUi(_ id: String) async throws -> UiState { try await call("DELETE", "/ui/\(enc(id))") }
+
+    // MARK: Newer endpoints (threads, skills, keys, usage, folders, terminal, attachments, search, sync)
+
+    func sendMessage(_ chatId: String, text: String, model: String?, attachments: [Attachment]) async throws {
+        var body: [String: JSONValue] = ["text": .string(text), "model": .str(model)]
+        if !attachments.isEmpty {
+            body["attachments"] = .array(attachments.map { ["name": .string($0.name), "path": .string($0.path), "kind": .string($0.kind), "size": .number($0.size)] })
+        }
+        try await send("POST", "/chats/\(chatId)/messages", .object(body))
+    }
+    func queueMessage(_ chatId: String, text: String) async throws { try await send("POST", "/chats/\(chatId)/queue", ["text": .string(text)]) }
+    func uploadAttachment(_ chatId: String, name: String, data: Data) async throws -> Attachment {
+        try await call("POST", "/chats/\(chatId)/attachments", ["name": .string(name), "data": .string(data.base64EncodedString())])
+    }
+    func allowAlways(_ approvalId: String) async throws { try await send("POST", "/approvals/\(approvalId)", ["always": true]) }
+
+    func startThread(_ id: String, model: String) async throws { try await send("POST", "/threads/\(id)/start-model", ["model": .string(model)]) }
+    func resolveThread(_ id: String, resolved: Bool) async throws { try await send("POST", "/threads/\(id)/resolve", ["resolved": .bool(resolved)]) }
+    func stopThread(_ id: String) async throws { try await send("POST", "/threads/\(id)/stop", [:]) }
+    func deleteThread(_ id: String) async throws { try await send("DELETE", "/threads/\(id)") }
+
+    func skills() async throws -> SkillsResponse { try await get("/skills") }
+    func setSkillActive(_ name: String, active: Bool) async throws { try await send("PUT", "/skills/\(enc(name))", ["active": .bool(active)]) }
+    func saveSkill(_ name: String, description: String, body: String) async throws {
+        try await send("PUT", "/skills/\(enc(name))", ["description": .string(description), "body": .string(body)])
+    }
+    func createSkill(_ name: String, description: String, body: String) async throws {
+        try await send("POST", "/skills", ["name": .string(name), "description": .string(description), "body": .string(body)])
+    }
+    func deleteSkill(_ name: String) async throws { try await send("DELETE", "/skills/\(enc(name))") }
+
+    func providerKey(_ provider: String) async throws -> KeyStatus { try await get("/keys/\(provider)") }
+    func saveProviderKey(_ provider: String, key: String) async throws -> KeyStatus { try await call("PUT", "/keys/\(provider)", ["key": .string(key)]) }
+    func checkProviderKey(_ provider: String) async throws -> KeyStatus { try await call("POST", "/keys/\(provider)/check") }
+    func removeProviderKey(_ provider: String) async throws -> KeyStatus { try await call("DELETE", "/keys/\(provider)") }
+    func usage(_ provider: String, model: String?, fresh: Bool) async throws -> ProviderUsage {
+        try await get(query("/usage/\(provider)", ["model": model, "fresh": fresh ? "1" : nil]))
+    }
+
+    func folders(projectId: String?, chatId: String?) async throws -> [FolderLink] {
+        try await get(query("/folders", ["projectId": projectId, "chatId": chatId]))
+    }
+    func linkFolder(_ path: String, access: String, projectId: String?, chatId: String?) async throws {
+        try await send("POST", "/folders/link", ["path": .string(path), "access": .string(access), "projectId": .str(projectId), "chatId": .str(chatId)])
+    }
+    func unlinkFolder(_ path: String, projectId: String?, chatId: String?) async throws {
+        try await send("POST", "/folders/unlink", ["path": .string(path), "projectId": .str(projectId), "chatId": .str(chatId)])
+    }
+    func setFolderAccess(_ path: String, access: String, projectId: String?, chatId: String?) async throws {
+        try await send("POST", "/folders/access", ["path": .string(path), "access": .string(access), "projectId": .str(projectId), "chatId": .str(chatId)])
+    }
+    func terminal(_ chatId: String) async throws -> TerminalState { try await get("/chats/\(chatId)/terminal") }
+    func stopCommand(_ id: String) async throws { try await send("POST", "/terminal/\(id)/stop", [:]) }
+    func endTerminalSession(_ chatId: String) async throws { try await send("DELETE", "/chats/\(chatId)/terminal/session") }
+
+    func disconnect(_ id: String, account: String?) async throws {
+        try await send("POST", "/connectors/\(id)/disconnect", ["account": .str(account)])
+    }
+    func setDefaultAccount(_ id: String, account: String) async throws {
+        try await send("POST", "/connectors/\(id)/default", ["account": .string(account)])
+    }
+
+    func searchChats(_ q: String) async throws -> [ChatHit] { try await get(query("/search/chats", ["q": q])) }
+
+    func importChat(phoneId: String, title: String, projectId: String?, model: String?, turns: [Turn]) async throws -> String {
+        let list: [JSONValue] = turns.map { t in
+            var o: [String: JSONValue] = ["role": .string(t.role.rawValue), "content": .string(t.content)]
+            if let m = t.model { o["model"] = .string(m) }
+            if let c = t.createdAt { o["createdAt"] = .string(c) }
+            if let d = t.durationMs { o["durationMs"] = .number(d) }
+            return .object(o)
+        }
+        let r: [String: String] = try await call("POST", "/chats/import", ["phoneId": .string(phoneId), "title": .string(title), "projectId": .str(projectId), "model": .str(model), "turns": .array(list)])
+        guard let id = r["id"] else { throw SyphError(message: "Syncing failed: no chat id came back.") }
+        return id
+    }
 }

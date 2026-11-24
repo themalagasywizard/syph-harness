@@ -7,7 +7,10 @@ struct ModelPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     var title = "Model"
     var value: String?
+    /// Also show the effort selector (and the provider's usage) for the chosen model.
+    var effort = false
     var onPick: (String) -> Void
+    @State private var usage: ProviderUsage?
     @State private var models: [ModelInfo] = []
     @State private var query = ""
     @State private var loading = true
@@ -17,11 +20,13 @@ struct ModelPickerSheet: View {
     private var groups: [Group] {
         let d = app.state?.config.defaults
         var pinned: [String] = []
-        for r in [d?.chatModel, d?.reflectorModel, value].compactMap({ $0 }) where !pinned.contains(r) { pinned.append(r) }
+        // Opens on the selected model and the ones picked recently, like the desktop's menu.
+        for r in [value].compactMap({ $0 }) + RecentModels.list + [d?.chatModel, d?.frontendModel, d?.reflectorModel].compactMap({ $0 }) where !pinned.contains(r) { pinned.append(r) }
+        pinned = Array(pinned.prefix(7))
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
         let match = { (m: ModelInfo) in needle.isEmpty || m.ref.lowercased().contains(needle) || m.label.lowercased().contains(needle) }
         var out: [Group] = []
-        if needle.isEmpty { out.append(Group(label: "Defaults", items: pinned.map { ($0, Fmt.model($0)) })) }
+        if needle.isEmpty { out.append(Group(label: "Recent", items: pinned.map { ($0, Fmt.model($0)) })) }
         var order: [String] = []
         var by: [String: [ModelInfo]] = [:]
         for m in models where match(m) {
@@ -38,6 +43,10 @@ struct ModelPickerSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if effort, !Effort.levels(value).isEmpty { effortSection }
+                if effort, let usage, !usage.meters.isEmpty {
+                    Section("\(Fmt.providerLabel(usage.provider)) usage") { UsageBar(usage: usage).listRowBackground(Palette.surface) }
+                }
                 ForEach(groups) { g in
                     Section(g.label) {
                         ForEach(g.items, id: \.ref) { m in
@@ -79,6 +88,30 @@ struct ModelPickerSheet: View {
             models = await app.loadModels()
             loading = false
         }
+        .task(id: value) {
+            guard effort, let v = value else { return }
+            let p = PhoneKeys.split(v).provider
+            if ["openrouter", "minimax", "gemini"].contains(p) { usage = try? await app.backend.usage(p, model: PhoneKeys.split(v).model, fresh: false) }
+        }
+    }
+
+    private var effortSection: some View {
+        let current = app.state?.config.defaults.effort ?? "auto"
+        let levels = Effort.levels(value)
+        let shown = levels.contains(current) ? current : "auto"
+        return Section {
+            Picker("Effort", selection: Binding(get: { shown }, set: { e in
+                Haptic.tap()
+                guard let d = app.state?.config.defaults else { return }
+                var json = d.json
+                if case .object(var o) = json { o["effort"] = .string(e); json = .object(o) }
+                Task { await app.patchSettings(["defaults": json]) }
+            })) {
+                ForEach(levels, id: \.self) { Text(Effort.label($0)).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .listRowBackground(Palette.surface)
+        } header: { Text("Effort") } footer: { Text(Effort.hint(shown)) }
     }
 
     private func icon(for ref: String) -> String {

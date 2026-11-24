@@ -52,35 +52,10 @@ struct SyphMark: View {
     }
 }
 
-/// The living-cell loader: the mark breathes and slowly turns while Syph works.
-struct CellLoader: View {
-    enum Mode { case loading, streaming, idle }
-    var size: CGFloat = 30
-    var mode: Mode = .loading
-
-    var body: some View {
-        TimelineView(.animation(paused: mode == .idle)) { tl in
-            let t = tl.date.timeIntervalSinceReferenceDate
-            let speed = mode == .streaming ? 2.6 : 1.4
-            ZStack {
-                SyphMarkShape()
-                    .fill(Palette.text, style: FillStyle(eoFill: true))
-                    .blur(radius: 6)
-                    .opacity(mode == .idle ? 0 : 0.25 + 0.15 * sin(t * speed))
-                SyphMarkShape()
-                    .fill(mode == .idle ? AnyShapeStyle(Palette.warn) : AnyShapeStyle(Palette.text), style: FillStyle(eoFill: true))
-            }
-            .scaleEffect(mode == .idle ? 1 : 0.92 + 0.08 * sin(t * speed))
-            .rotationEffect(.degrees(mode == .idle ? 0 : t * (mode == .streaming ? 40 : 18)))
-            .frame(width: size, height: size)
-        }
-    }
-}
-
 #Preview {
     VStack(spacing: 30) {
         SyphMark(size: 80)
-        CellLoader(size: 60)
+        LivingMark(size: 60)
     }
     .padding()
     .background(Palette.bg)

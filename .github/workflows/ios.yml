@@ -1,0 +1,52 @@
+# Compile check for the iPhone app on a Mac runner: builds for the Simulator without signing.
+name: iOS build
+
+on:
+  push:
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  pull_request:
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pick the newest Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          echo "Using $XC"
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+      - name: Build for the Simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/Syph.xcodeproj -target Syph -sdk iphonesimulator -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ONLY_ACTIVE_ARCH=YES build 2>&1 | tee build.log | grep -E "error:|warning: .*(deprecated|never)|BUILD" || true
+          grep -q "BUILD SUCCEEDED" build.log
+      - name: Show errors
+        if: failure()
+        run: grep -E "error:" build.log | sort -u | head -100 || true
+      - name: Screenshots in the Simulator (demo data)
+        run: |
+          set -x
+          APP=$(find ios/build -name "Syph.app" -type d | head -1)
+          DEV=$(xcrun simctl list devices available | grep -E "iPhone 1[6-9]|iPhone 2" | grep -v Plus | head -1 | grep -oE "[0-9A-F-]{36}")
+          xcrun simctl boot "$DEV"
+          xcrun simctl bootstatus "$DEV" -b
+          xcrun simctl install "$DEV" "$APP"
+          mkdir -p shots
+          xcrun simctl launch "$DEV" app.syph.ios -syphDemoTab chat:c-digest
+          for t in 01 02 03 04 05 06 07 08 09 10; do sleep 0.25; xcrun simctl io "$DEV" screenshot "shots/launch-$t.png"; done
+          sleep 3; xcrun simctl io "$DEV" screenshot shots/chat.png
+          for tab in new menu projects skills settings; do
+            xcrun simctl terminate "$DEV" app.syph.ios || true
+            xcrun simctl launch "$DEV" app.syph.ios -syphDemoTab $tab
+            sleep 7; xcrun simctl io "$DEV" screenshot "shots/$tab.png"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: shots/

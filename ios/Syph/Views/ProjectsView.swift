@@ -8,14 +8,19 @@ struct ProjectsView: View {
         let projects = app.state?.projects ?? []
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Each project has its own instructions, files, memory and tasks.")
+                Text(app.isStandalone ? "Projects from your computer, as last synced. Open one to read its coordinator; changes need the computer." : "Each project has a coordinator that plans the work and runs threads, with its own instructions, files and tasks.")
                     .font(.subheadline).foregroundStyle(Palette.muted)
                 if projects.isEmpty {
                     EmptyState(icon: "square.stack.3d.up", title: "No projects yet", message: "A project keeps related chats, files and scheduled tasks together, with its own instructions.").card()
                 }
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                     ForEach(projects) { p in
-                        NavigationLink { ProjectDetailView(id: p.id) } label: { ProjectCard(project: p) }.buttonStyle(.pressable)
+                        Button { Haptic.tap(); app.openProject(p.id) } label: { ProjectCard(project: p) }
+                            .buttonStyle(.pressable)
+                            .contextMenu {
+                                Button { app.openProject(p.id) } label: { Label("Open coordinator", systemImage: "bubble.left.and.text.bubble.right") }
+                                NavigationLink { ProjectDetailView(id: p.id) } label: { Label("Project settings", systemImage: "gearshape") }
+                            }
                     }
                 }
             }
@@ -28,6 +33,7 @@ struct ProjectsView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { Haptic.tap(); creating = true } label: { Image(systemName: "plus").font(.body.weight(.semibold)) }
+                    .disabled(!app.capabilities.projects)
             }
         }
         .sheet(isPresented: $creating) { NewProjectSheet() }

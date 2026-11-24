@@ -202,6 +202,11 @@ export class Harness {
 
   private broadcast: Listener = (e) => this.listeners.forEach((l) => l(e));
 
+  /** Tell every window the chat list changed (a chat came in from outside a run, such as a phone sync). */
+  chatsChanged() {
+    this.broadcast({ type: "chats" });
+  }
+
   tools(): ToolRegistry {
     const appTools = [...this.connectors.tools(), ...this.mcp.flatMap((m) => m.tools)];
     // Tools for apps and MCP servers are shown only once a chat asks for them (find_tools).

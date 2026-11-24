@@ -304,6 +304,16 @@ export function createApp(h: Harness, opts: { uiDir?: string; phonePort?: number
     return { ...rest, running: h.isLive(p.id), progress: h.progressOf(p.id) };
   });
   route("POST", "/api/chats", (_q, _s, _p, body) => store.createChat(home, pick(body ?? {}, ["projectId", "title", "model"])));
+  // Chats the iPhone app had while it ran on its own, brought in when it reaches this computer again.
+  route("POST", "/api/chats/import", (_q, _s, _p, body) => {
+    try {
+      const c = store.importPhoneChat(home, { phoneId: String(body?.phoneId ?? ""), title: typeof body?.title === "string" ? body.title : undefined, projectId: typeof body?.projectId === "string" ? body.projectId : undefined, model: typeof body?.model === "string" ? body.model : undefined, turns: Array.isArray(body?.turns) ? body.turns : [] });
+      h.chatsChanged();
+      return { id: c.id, title: c.title };
+    } catch (e) {
+      throw httpError(400, (e as Error).message);
+    }
+  });
   route("PATCH", "/api/chats/:id", (_q, _s, p, body) => {
     const c = store.getChat(home, p.id);
     if (!c) throw httpError(404, "No such chat");
