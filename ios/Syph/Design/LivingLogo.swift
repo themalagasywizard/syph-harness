@@ -168,6 +168,7 @@ struct LivingMark: View {
     /// Appear mid-swim and spring back into the exact mark (for a reply that has just finished).
     var settle = false
 
+    private static let overscan: CGFloat = 1.6
     @State private var clock = LivingClock()
     @State private var settling = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -188,7 +189,9 @@ struct LivingMark: View {
                 let now = tl.date.timeIntervalSinceReferenceDate
                 let s = clock.advance(now: now, target: target, calm: reduceMotion)
                 let pose = MarkGeometry.Pose(grow: s.grow, swim: s.swim, beat: s.beat, breath: s.breath, t: now)
-                let scale = min(sz.width, sz.height) / 208
+                // The canvas is larger than the mark so the glow's blur fades out before the edge
+                // (a blur clipped at the canvas bounds showed as a faint square).
+                let scale = size / 208
                 let mark = MarkGeometry.path(pose)
                     .applying(CGAffineTransform(translationX: sz.width / 2, y: sz.height / 2).scaledBy(x: scale, y: scale))
 
@@ -204,13 +207,14 @@ struct LivingMark: View {
                 if glow {
                     // Nucleus light: brighter while working and on each beat.
                     let c = CGPoint(x: sz.width / 2, y: sz.height / 2)
-                    let r = min(sz.width, sz.height) * 0.16
+                    let r = size * 0.16
                     let a = (0.15 + 0.35 * s.energy + 0.4 * s.beat) * s.grow
                     ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
                              with: .radialGradient(Gradient(colors: [.white.opacity(a), .white.opacity(0)]), center: c, startRadius: 0, endRadius: r))
                 }
             }
         }
+        .frame(width: size * Self.overscan, height: size * Self.overscan)
         .frame(width: size, height: size)
         .onAppear {
             if settle && !reduceMotion {
