@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, AtSign, Plus, Settings, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, Clock, Code2, Copy, CornerDownRight, Files, Flag, FlaskConical, FolderClosed, Globe, Image as ImageIcon, Lightbulb, LayoutTemplate, ListChecks, Loader2, Moon, Paperclip, Pencil, RotateCcw, ShieldQuestion, Slash, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Wrench, X, Zap } from "lucide-react";
+import { ArrowUp, AtSign, Plus, Settings, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, Clock, Copy, CornerDownRight, Files, Flag, FlaskConical, FolderClosed, FolderSearch, GitBranch, Globe, Image as ImageIcon, Layers, Lightbulb, LayoutTemplate, ListChecks, Loader2, Moon, Paperclip, Pencil, RotateCcw, ShieldQuestion, Slash, Sparkles, Square, Sun, ThumbsDown, ThumbsUp, Undo2, Wrench, X, Zap } from "lucide-react";
 import { Markdown } from "../components/Markdown";
 import { Mark } from "../components/Logo";
 import { CellLoader } from "../components/CellLoader";
@@ -15,11 +15,16 @@ import { FileCard, FileIcon } from "../components/FilePreview";
 import { ExtIcon, Slot, type UiExtension } from "../ext";
 import { AutoTurnLine, ThreadCrumb, ThreadRail, ThreadUpdateCard, useProjectThreads } from "../components/Threads";
 
-const suggestions = [
-  { text: "Turn what we did today into a reusable skill", icon: <Lightbulb size={18} /> },
-  { text: "Schedule a daily summary of my research notes", icon: <Clock size={18} /> },
-  { text: "Review your system prompt and suggest one improvement", icon: <Sparkles size={18} /> },
-  { text: "Write a script that checks if my Ollama server is up", icon: <Code2 size={18} /> },
+const NORMAL_PILLS = [
+  { label: "Turn work into a skill", prompt: "Turn what we did today into a reusable skill", icon: <Lightbulb size={14} /> },
+  { label: "Schedule a task", prompt: "Schedule a daily summary of my research notes", icon: <Clock size={14} /> },
+  { label: "Improve my prompt", prompt: "Review your system prompt and suggest one improvement", icon: <Sparkles size={14} /> },
+];
+
+const COORDINATOR_PILLS = [
+  { label: "Project status", prompt: "Give me a quick overview of this project's current state and threads.", icon: <Layers size={14} /> },
+  { label: "Inspect files", prompt: "Inspect the files and folders in this project and summarize the architecture.", icon: <FolderSearch size={14} /> },
+  { label: "Plan parallel work", prompt: "Help me break down our next steps into parallel worker threads.", icon: <GitBranch size={14} /> },
 ];
 
 function greeting() {
@@ -728,21 +733,31 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
       </div>
 
       <div className="chat-scroll" ref={scroller}>
-        <div className="chat-col">
+        <div className={`chat-col ${empty ? "is-empty" : ""}`}>
           {empty ? (
-            <div className="hero">
-              <div className="mark"><Mark size={36} /></div>
-              <h1>{greeting()}.</h1>
-              <h1 className="s">{role === "coordinator" ? `What should ${project?.name ?? "this project"} work on?` : "What should we work on?"}</h1>
-              {role === "coordinator" && <p className="hint coord-hero">Ask for anything. Quick questions are answered here; real work goes to its own thread, which you'll see on the right and can open at any time.</p>}
-              <div className="chips">
-                <Slot name="chat.empty" ctx={slotCtx} variant="chip" />
-                {suggestions.map((s) => (
-                  <button key={s.text} className="chip" onClick={() => send(s.text)}>
-                    <p>{s.text}</p>
-                    <span className="ic">{s.icon}</span>
+            <div className={`hero ${role === "coordinator" ? "hero-coord" : ""}`}>
+              <div className="hero-logo" aria-hidden="true">
+                <CellLoader state="streaming" size={64} bare />
+              </div>
+              {role === "coordinator" ? (
+                <>
+                  <span className="hero-eyebrow"><GitBranch size={12} /> Coordinator</span>
+                  <h1 className="hero-title">{project?.name ?? "Project"}</h1>
+                </>
+              ) : (
+                <>
+                  {project && <span className="hero-eyebrow"><FolderClosed size={12} /> {project.name}</span>}
+                  <h1 className="hero-title">{greeting()}.</h1>
+                </>
+              )}
+              <div className="hero-pills">
+                {(role === "coordinator" ? COORDINATOR_PILLS : NORMAL_PILLS).map((p) => (
+                  <button key={p.label} className="hero-pill" onClick={() => send(p.prompt)}>
+                    <span className="hp-ic">{p.icon}</span>
+                    <span>{p.label}</span>
                   </button>
                 ))}
+                <Slot name="chat.empty" ctx={slotCtx} variant="chip" />
               </div>
             </div>
           ) : (
@@ -817,7 +832,15 @@ export function ChatView({ chatId, projectId: initialProject, draft: initialDraf
           <textarea
             ref={textarea}
             rows={1}
-            placeholder={live ? "Add a note for Syph while it works…" : project ? `Message Syph in ${project.name}` : "Message Syph"}
+            placeholder={
+              live
+                ? "Add a note for Syph while it works…"
+                : role === "coordinator"
+                  ? `Ask ${project?.name ?? "coordinator"} or start a task…`
+                  : project
+                    ? `Message Syph in ${project.name}`
+                    : "Message Syph"
+            }
             value={draft}
             onChange={(e) => onDraft(e.target.value, e.target.selectionStart ?? e.target.value.length)}
             onPaste={(e) => {

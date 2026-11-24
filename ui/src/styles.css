@@ -159,16 +159,92 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 /* ---------- Chat ---------- */
 .chat-scroll { flex: 1; overflow-y: auto; }
 .chat-col { max-width: 760px; margin: 0 auto; padding: 0 24px 40px; }
+.chat-col.is-empty { min-height: 100%; display: flex; flex-direction: column; justify-content: center; padding-bottom: 10vh; }
 
-.hero { padding-top: 18vh; }
-.hero h1 { font-family: var(--serif); font-size: 52px; font-weight: 400; letter-spacing: -0.01em; margin: 0; line-height: 1.1; }
-.hero h1.s { color: var(--faint); }
-.hero .mark { color: var(--text); margin-bottom: 28px; }
-.chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 48px; }
-.chip { background: transparent; border: 1px solid var(--border); border-radius: 12px; padding: 16px; height: 140px; text-align: left; display: flex; flex-direction: column; justify-content: space-between; transition: background .15s, border-color .15s; color: var(--muted); }
-.chip:hover { background: var(--surface); border-color: var(--surface-3); color: var(--text); }
-.chip p { margin: 0; font-size: 14px; }
-.chip .ic { align-self: flex-start; color: var(--faint); }
+/* Revamped minimal centered empty state (normal & coordinator chats) */
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 24px 0 12px;
+  gap: 14px;
+}
+.hero-logo {
+  display: grid;
+  place-items: center;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 75%, transparent);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.hero-title {
+  font-family: var(--serif);
+  font-size: clamp(32px, 4.4vw, 44px);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  margin: 0;
+  line-height: 1.15;
+  color: var(--text);
+}
+.hero-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  max-width: 620px;
+}
+.hero-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 65%, transparent);
+  color: var(--muted);
+  font-size: 13px;
+  transition: background .15s, border-color .15s, color .15s, transform .15s;
+}
+.hero-pill:hover {
+  background: var(--surface-2);
+  border-color: var(--surface-3);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.hero-pill .hp-ic {
+  display: inline-flex;
+  color: var(--faint);
+  transition: color .15s;
+}
+.hero-pill:hover .hp-ic { color: var(--text); }
+.hero-pills .chip {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  background: color-mix(in srgb, var(--surface) 65%, transparent);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+}
+.hero-pills .chip:hover { background: var(--surface-2); border-color: var(--surface-3); color: var(--text); }
+.hero-pills .chip p { margin: 0; font-size: 13px; }
 
 .msg { margin: 28px 0; }
 .msg.user { display: flex; justify-content: flex-end; }

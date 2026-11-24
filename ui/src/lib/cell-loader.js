@@ -359,7 +359,7 @@ void main(){
   const reduceMQ = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
 
   class CellLoader extends HTMLElement {
-    static get observedAttributes() { return ['state', 'size']; }
+    static get observedAttributes() { return ['state', 'size', 'bare']; }
 
     constructor() {
       super();
@@ -419,7 +419,8 @@ void main(){
     }
 
     attributeChangedCallback(name) {
-      if (name === 'size') this._applySize();
+      if (name === 'size' || name === 'bare') this._applySize();
+      if (name === 'bare') this._resize();
       if (name === 'state') this._applyLabel();
     }
 
@@ -448,7 +449,7 @@ void main(){
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const px = Math.max(1, Math.round(w * dpr));
       if (this._canvas.width !== px) { this._canvas.width = px; this._canvas.height = px; }
-      this._detail = smooth(30, 96, w);
+      this._detail = this.hasAttribute('bare') ? 0 : smooth(30, 96, w);
       if (!this._raf && this._ctx) this._draw();
     }
     _sync() {
