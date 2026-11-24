@@ -5,6 +5,7 @@ struct SideMenu: View {
     @Environment(AppModel.self) private var app
     @State private var query = ""
     @State private var confirmDelete: ChatSummary?
+    @State private var hits: [ChatHit] = []
 
     private var chats: [ChatSummary] {
         let all = (app.state?.chats ?? []).filter { $0.role != "thread" }
@@ -33,9 +34,14 @@ struct SideMenu: View {
                         item("square.and.pencil", "New chat") { app.newChat() }
                             .padding(.bottom, 6)
                         item("square.stack.3d.up", "Projects", badge: app.state?.projects.count, quiet: true) { app.open(.projects) }
-                        item("clock.arrow.2.circlepath", "Tasks") { app.open(.tasks) }
-                        item("sparkles", "Evolve", badge: app.state?.pendingProposals) { app.open(.evolve) }
-                        item("puzzlepiece.extension", "Connectors") { app.open(.connectors) }
+                        if app.capabilities.computer {
+                            item("clock.arrow.2.circlepath", "Tasks") { app.open(.tasks) }
+                            item("sparkles", "Evolve", badge: app.state?.pendingProposals) { app.open(.evolve) }
+                            item("wand.and.stars", "Skills") { app.open(.skills) }
+                            item("puzzlepiece.extension", "Connectors") { app.open(.connectors) }
+                        } else if app.isStandalone {
+                            standaloneCard.padding(.top, 8)
+                        }
 
                         Text("Recent").sectionLabel().padding(.horizontal, 14).padding(.top, 22).padding(.bottom, 6)
                     }
@@ -43,12 +49,33 @@ struct SideMenu: View {
                         Text(query.isEmpty ? "No chats yet." : "No matches.").font(.subheadline).foregroundStyle(Palette.faint).padding(14)
                     }
                     ForEach(chats) { c in chatRow(c) }
+                    if !query.isEmpty && !hits.isEmpty {
+                        Text("In messages").sectionLabel().padding(.horizontal, 14).padding(.top, 16).padding(.bottom, 4)
+                        ForEach(hits.filter { h in !chats.contains { $0.id == h.id } }) { h in
+                            Button { Haptic.tap(); app.openChat(h.id) } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(h.title).font(.body).foregroundStyle(Palette.text).lineLimit(1)
+                                    if let sn = h.snippet { Text(sn).font(.caption).foregroundStyle(Palette.muted).lineLimit(2) }
+                                }
+                                .padding(.horizontal, 14).padding(.vertical, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.pressable)
+                        }
+                    }
                 }
                 .padding(.horizontal, 6)
                 .padding(.top, 14)
                 .padding(.bottom, 20)
             }
             .scrollDismissesKeyboard(.immediately)
+            .task(id: query) {
+                // Search inside messages too (on the computer), after a short pause in typing.
+                guard query.count >= 2 else { hits = []; return }
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                if !Task.isCancelled { hits = (try? await app.backend.searchChats(query)) ?? [] }
+            }
 
             Divider().overlay(Palette.stroke)
             Button { app.open(.settings) } label: {
@@ -62,7 +89,7 @@ struct SideMenu: View {
                         Text("Settings").font(.body.weight(.semibold)).foregroundStyle(Palette.text)
                         HStack(spacing: 5) {
                             StatusDot(status: app.loadError == nil ? "ok" : "error")
-                            Text(app.connection == .demo ? "Demo" : app.connection.label).font(.caption).foregroundStyle(Palette.muted).lineLimit(1)
+                            Text(app.connection == .demo ? "Demo" : app.isStandalone ? "On this iPhone" : app.connection.label).font(.caption).foregroundStyle(Palette.muted).lineLimit(1)
                         }
                     }
                     Spacer()
@@ -86,6 +113,28 @@ struct SideMenu: View {
                 }
             }
         }
+    }
+
+    /// Standalone: what works here, and the way back to the computer.
+    private var standaloneCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                LivingMark(size: 22, mode: app.syncing ? .loading : .idle, birth: false, glow: false)
+                Text("On this iPhone").font(.subheadline.weight(.semibold))
+            }
+            Text(app.pairedServer == nil
+                 ? "Chats run on the phone with your own key. Pair with Syph on a computer for projects, tasks, files and the terminal."
+                 : "Chats run on the phone and sync to your computer when it's back. Tasks, Evolve, connectors and the terminal wait for it.")
+                .font(.caption).foregroundStyle(Palette.muted)
+            if app.pairedServer != nil {
+                Button { Task { await app.reconnectNow() } } label: { Label(app.syncing ? "Connecting…" : "Reconnect", systemImage: "arrow.triangle.2.circlepath") }
+                    .font(.caption.weight(.semibold)).disabled(app.syncing)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.surface2, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(.horizontal, 8)
     }
 
     private func item(_ icon: String, _ title: String, badge: Int? = nil, quiet: Bool = false, action: @escaping () -> Void) -> some View {
@@ -123,6 +172,10 @@ struct SideMenu: View {
                 if let color { Circle().fill(color).frame(width: 7, height: 7) }
                 Text(c.title).font(.body).foregroundStyle(Palette.text).lineLimit(1)
                 Spacer(minLength: 4)
+                if c.id.hasPrefix("phone-") {
+                    Image(systemName: "iphone").font(.caption2).foregroundStyle(Palette.faint).accessibilityLabel("Made on this phone, not synced yet")
+                }
+                if c.role == "coordinator" { Image(systemName: "arrow.triangle.branch").font(.caption2).foregroundStyle(Palette.faint) }
                 if c.status != nil { StatusDot(status: c.status == "waiting" ? "waiting" : "running", pulse: true) }
             }
             .padding(.horizontal, 14)

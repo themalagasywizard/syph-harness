@@ -17,15 +17,35 @@ struct SettingsView: View {
                     ConnectionCard(confirmDisconnect: $confirmDisconnect)
 
                     RowGroup(title: "Model providers") {
-                        NavigationLink { OpenRouterKeyView() } label: {
+                        NavigationLink { ProviderKeyView(provider: "openrouter") } label: {
                             SettingRow(title: "OpenRouter", subtitle: "Hundreds of hosted models through one key.", icon: "cloud.fill") {
                                 Tag(text: cfg.hasOpenRouterKey ? "Key set" : "No key", color: cfg.hasOpenRouterKey ? Palette.ok : Palette.warn)
                                 chevron
                             }
                         }
-                        ProviderRow(name: "ollama", title: "Ollama", subtitle: "Local models on your computer or network.", icon: "cpu", providers: cfg.providers)
-                        ProviderRow(name: "lmstudio", title: "OpenAI-compatible", subtitle: "LM Studio, llama.cpp, vLLM or any /v1 endpoint.", icon: "server.rack", providers: cfg.providers)
+                        NavigationLink { ProviderKeyView(provider: "minimax") } label: {
+                            SettingRow(title: "MiniMax", subtitle: "M3.1 Flash, fast and cheap. Plan usage shows here.", icon: "bolt.horizontal.circle.fill", iconColor: Palette.accent2) {
+                                Tag(text: cfg.hasMiniMaxKey == true ? "Key set" : "No key", color: cfg.hasMiniMaxKey == true ? Palette.ok : Palette.faint)
+                                chevron
+                            }
+                        }
+                        NavigationLink { ProviderKeyView(provider: "gemini") } label: {
+                            SettingRow(title: "Google Gemini", subtitle: "Gemini 4 Neon for frontend design.", icon: "sparkle", iconColor: Palette.ok) {
+                                Tag(text: cfg.hasGeminiKey == true ? "Key set" : "No key", color: cfg.hasGeminiKey == true ? Palette.ok : Palette.faint)
+                                chevron
+                            }
+                        }
+                        if app.capabilities.computer {
+                            ProviderRow(name: "ollama", title: "Ollama", subtitle: "Local models on your computer or network.", icon: "cpu", providers: cfg.providers)
+                            ProviderRow(name: "lmstudio", title: "OpenAI-compatible", subtitle: "LM Studio, llama.cpp, vLLM or any /v1 endpoint.", icon: "server.rack", providers: cfg.providers)
+                        }
                     }
+                    if app.isStandalone {
+                        Text("On this phone, chats use the keys you add here. Your computer's settings, connectors, tasks and Evolve come back when you reconnect.")
+                            .font(.footnote).foregroundStyle(Palette.muted).padding(.horizontal, 6)
+                    }
+
+                    if app.capabilities.computer {
 
                     RowGroup(title: "Default models") {
                         ForEach([("chatModel", "Chat", "New chats start with this model."), ("taskModel", "Tasks", "Scheduled tasks use this unless they pick one."), ("reflectorModel", "Reflector", "Proposes improvements. Use your strongest model."), ("judgeModel", "Judge", "Scores eval answers. Ideally a different family.")], id: \.0) { k, label, hint in
@@ -106,12 +126,14 @@ struct SettingsView: View {
                     }
 
                     RowGroup(title: "Skills") {
-                        ForEach(s.skills, id: \.name) { sk in
-                            SettingRow(title: sk.name, subtitle: sk.description, icon: "wand.and.stars", iconColor: Palette.accent) { EmptyView() }
+                        NavigationLink { SkillsView() } label: {
+                            SettingRow(title: "Manage skills", subtitle: "\(s.skills.count) skills. Switch off, edit or delete them; Syph can tidy them too.", icon: "wand.and.stars", iconColor: Palette.accent) { chevron }
                         }
+                    }
                     }
 
                     RowGroup(title: "Data and appearance") {
+                        if app.capabilities.computer {
                         SettingRow(title: "Export training data", subtitle: exported ?? "SFT and DPO datasets as JSONL, for fine-tuning a local model.", icon: "square.and.arrow.down.fill", iconColor: Palette.ok) {
                             Button {
                                 exporting = true
@@ -125,6 +147,7 @@ struct SettingsView: View {
                             } label: { if exporting { ProgressView() } else { Text("Export") } }
                             .buttonStyle(.tonalCompact)
                         }
+                        }
                         SettingRow(title: "Appearance", icon: "circle.lefthalf.filled", iconColor: Palette.muted) {
                             Picker("Appearance", selection: $app.theme) {
                                 ForEach(ThemePreference.allCases) { Text($0.label).tag($0) }
@@ -133,7 +156,7 @@ struct SettingsView: View {
                         }
                     }
 
-                    Text("Syph stores everything in \(s.homePath) on your computer.")
+                    Text(app.isStandalone ? "Phone chats are saved on this iPhone until they sync to your computer." : "Syph stores everything in \(s.homePath) on your computer.")
                         .font(.footnote).foregroundStyle(Palette.faint).frame(maxWidth: .infinity)
                 }
                 .padding(.horizontal, 20)
@@ -212,25 +235,41 @@ struct ConnectionCard: View {
 
     var body: some View {
         let demo = app.connection == .demo
+        let phone = app.isStandalone
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) {
                 ZStack {
                     Circle().fill(Palette.accentGradient).opacity(0.25)
-                    Image(systemName: demo ? "play.circle.fill" : "desktopcomputer").font(.title3.weight(.semibold)).foregroundStyle(Palette.accent)
+                    Image(systemName: demo ? "play.circle.fill" : phone ? "iphone" : "desktopcomputer").font(.title3.weight(.semibold)).foregroundStyle(Palette.accent)
                 }
                 .frame(width: 52, height: 52)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(demo ? "Demo mode" : "Connected to \(app.connection.label)").font(.headline)
+                    Text(demo ? "Demo mode" : phone ? "Syph on this iPhone" : "Connected to \(app.connection.label)").font(.headline)
                     HStack(spacing: 6) {
-                        StatusDot(status: app.loadError == nil ? "ok" : "error", pulse: app.loadError == nil)
-                        Text(demo ? "Sample data, nothing leaves your phone" : "Paired by QR code").font(.subheadline).foregroundStyle(Palette.muted).lineLimit(1)
+                        StatusDot(status: phone ? "waiting" : app.loadError == nil ? "ok" : "error", pulse: app.loadError == nil)
+                        Text(demo ? "Sample data, nothing leaves your phone" : phone ? (app.pairedServer == nil ? "Not paired with a computer" : "Syncs to your computer when it's back") : "Paired by QR code")
+                            .font(.subheadline).foregroundStyle(Palette.muted).lineLimit(1)
                     }
                 }
                 Spacer()
             }
+            if phone, let synced = Mirror.lastSynced {
+                Text("Last synced with your computer \(Fmt.rel(iso(synced))).").font(.footnote).foregroundStyle(Palette.muted)
+            }
             HStack(spacing: 10) {
-                Button { showConnect = true } label: { Label(demo ? "Scan QR code" : "Pair again", systemImage: "qrcode.viewfinder").frame(maxWidth: .infinity) }.buttonStyle(.primaryCompact)
-                Button { confirmDisconnect = true } label: { Text("Disconnect").frame(maxWidth: .infinity) }.buttonStyle(.tonalCompact)
+                if phone && app.pairedServer != nil {
+                    Button { Task { await app.reconnectNow() } } label: {
+                        Label(app.syncing ? "Connecting…" : "Reconnect", systemImage: "arrow.triangle.2.circlepath").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.primaryCompact)
+                    .disabled(app.syncing)
+                } else {
+                    Button { showConnect = true } label: { Label(demo || phone ? "Scan QR code" : "Pair again", systemImage: "qrcode.viewfinder").frame(maxWidth: .infinity) }.buttonStyle(.primaryCompact)
+                }
+                if case .remote = app.connection {
+                    Button { app.goStandalone() } label: { Text("Use on phone").frame(maxWidth: .infinity) }.buttonStyle(.tonalCompact)
+                }
+                Button { confirmDisconnect = true } label: { Text(phone ? "Sign out" : "Disconnect").frame(maxWidth: .infinity) }.buttonStyle(.tonalCompact)
             }
         }
         .padding(18)
@@ -312,8 +351,22 @@ struct BudgetRow: View {
 }
 
 /// Add, check, replace or remove the OpenRouter key. The server only ever returns a masked form.
-struct OpenRouterKeyView: View {
+typealias OpenRouterKeyView = ProviderKeyView
+
+/// A model provider's API key: OpenRouter, MiniMax or Google Gemini. On the computer it's saved in
+/// Syph's .env; standalone it's kept in this phone's Keychain for chats made here.
+struct ProviderKeyView: View {
     @Environment(AppModel.self) private var app
+    var provider = "openrouter"
+    @State private var usage: ProviderUsage?
+
+    private var info: (name: String, blurb: String, icon: String, placeholder: String, link: String, help: String) {
+        switch provider {
+        case "minimax": return ("MiniMax", "M3.1 Flash by default. Pay as you go, or the key from a MiniMax plan.", "bolt.horizontal.circle.fill", "sk-…", "https://platform.minimax.io/user-center/basic-information/interface-key", "Get one at platform.minimax.io.")
+        case "gemini": return ("Google Gemini", "Gemini 4 Neon for frontend design work.", "sparkle", "AIza…", "https://aistudio.google.com/apikey", "Get one at aistudio.google.com.")
+        default: return ("OpenRouter", "Hundreds of hosted models through one key.", "cloud.fill", "sk-or-v1-…", "https://openrouter.ai/keys", "Get one at openrouter.ai/keys.")
+        }
+    }
     @State private var status: KeyStatus?
     @State private var editing = false
     @State private var value = ""
@@ -325,10 +378,10 @@ struct OpenRouterKeyView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(spacing: 14) {
-                    IconTile(system: "cloud.fill", size: 56)
+                    IconTile(system: info.icon, size: 56)
                     VStack(alignment: .leading) {
-                        Text("OpenRouter").font(.title2.bold())
-                        Text("Used for DeepSeek by default.").font(.subheadline).foregroundStyle(Palette.muted)
+                        Text(info.name).font(.title2.bold())
+                        Text(info.blurb).font(.subheadline).foregroundStyle(Palette.muted)
                     }
                 }
                 if let status {
@@ -336,14 +389,14 @@ struct OpenRouterKeyView: View {
                         VStack(alignment: .leading, spacing: 14) {
                             Text("API key").sectionLabel()
                             Text(status.masked ?? "••••").font(.title3.monospaced().weight(.semibold))
-                            Text(status.source == "environment" ? "From the .env next to Syph or the environment" : "Saved in Settings").font(.footnote).foregroundStyle(Palette.muted)
+                            Text(status.source == "environment" ? "From the .env next to Syph or the environment" : status.source == "this iPhone" ? "Kept in this iPhone's Keychain, for chats on the phone" : "Saved in Settings on your computer").font(.footnote).foregroundStyle(Palette.muted)
                             if let c = status.check { CheckLine(check: c) }
                             HStack(spacing: 8) {
-                                Button { run("check") { try await app.backend.checkKey() } } label: {
+                                Button { run("check") { try await app.backend.checkProviderKey(provider) } } label: {
                                     Label("Check", systemImage: "arrow.clockwise").symbolEffect(.rotate, isActive: busy == "check")
                                 }.buttonStyle(.tonalCompact)
                                 Button("Replace") { editing = true }.buttonStyle(.tonalCompact)
-                                if status.source == "settings" {
+                                if status.source == "settings" || status.source == "this iPhone" {
                                     Button { confirmRemove = true } label: { Label("Remove", systemImage: "trash") }.buttonStyle(.destructiveCompact)
                                 }
                             }
@@ -353,7 +406,7 @@ struct OpenRouterKeyView: View {
                     } else {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("API key").sectionLabel()
-                            SecureField("sk-or-v1-…", text: $value)
+                            SecureField(info.placeholder, text: $value)
                                 .font(.body.monospaced())
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
@@ -363,32 +416,42 @@ struct OpenRouterKeyView: View {
                                 if status.set { Button("Cancel") { editing = false; value = ""; error = nil }.buttonStyle(.tonalCompact) }
                                 Spacer()
                                 Button {
-                                    run("save") { try await app.backend.saveKey(value) }
+                                    run("save") { try await app.backend.saveProviderKey(provider, key: value) }
                                 } label: { Text(busy == "save" ? "Checking…" : "Save key") }
                                 .buttonStyle(.primaryCompact)
                                 .disabled(value.trimmingCharacters(in: .whitespaces).isEmpty || busy != nil)
                             }
-                            Text("Get one at openrouter.ai/keys. Syph checks it with OpenRouter, then saves it to the .env in your Syph data folder on your computer, where its own file tools can't read it.")
+                            Text(app.isStandalone
+                                 ? "\(info.help) It stays in this iPhone's Keychain and is only used for chats on the phone. Syph on your computer keeps its own key."
+                                 : "\(info.help) Syph checks it with \(info.name), then saves it to the .env in your Syph data folder on your computer, where its own file tools can't read it.")
                                 .font(.footnote).foregroundStyle(Palette.muted)
-                            Link("Open openrouter.ai/keys", destination: URL(string: "https://openrouter.ai/keys")!).font(.footnote.weight(.semibold))
+                            Link("Get a key", destination: URL(string: info.link)!).font(.footnote.weight(.semibold))
                         }
                         .card()
                     }
                 } else {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
                 }
+                if let usage, !usage.meters.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Usage").sectionLabel()
+                        UsageBar(usage: usage)
+                    }
+                    .card()
+                }
                 if let error { ErrorBanner(text: error) }
             }
             .padding(20)
         }
         .background(Backdrop())
-        .navigationTitle("OpenRouter")
+        .navigationTitle(info.name)
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            if let s = try? await app.backend.keyStatus() { status = s; editing = !s.set }
+            if let s = try? await app.backend.providerKey(provider) { status = s; editing = !s.set }
+            if status?.set == true { usage = try? await app.backend.usage(provider, model: nil, fresh: true) }
         }
-        .confirmationDialog("Remove the OpenRouter key?", isPresented: $confirmRemove, titleVisibility: .visible) {
-            Button("Remove key", role: .destructive) { run("remove") { try await app.backend.removeKey() } }
+        .confirmationDialog("Remove the \(info.name) key?", isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("Remove key", role: .destructive) { run("remove") { try await app.backend.removeProviderKey(provider) } }
         }
     }
 

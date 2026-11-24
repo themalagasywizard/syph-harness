@@ -11,7 +11,7 @@ struct WelcomeView: View {
             Backdrop()
             VStack(spacing: 0) {
                 Spacer()
-                CellLoader(size: 96, mode: .loading)
+                LivingMark(size: 104, mode: .loading, birth: true)
                     .scaleEffect(appeared ? 1 : 0.6)
                     .opacity(appeared ? 1 : 0)
                 Text("syph")
@@ -49,15 +49,25 @@ struct WelcomeView: View {
 
                     Button {
                         Haptic.tap()
-                        app.connect(.demo)
+                        app.connect(.standalone)
+                        app.open(.settings)
                     } label: {
-                        Text("Explore the demo").frame(maxWidth: .infinity)
+                        Label("Use on this phone only", systemImage: "iphone").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.tonal)
+
+                    Button {
+                        Haptic.tap()
+                        app.connect(.demo)
+                    } label: {
+                        Text("Explore the demo").font(.subheadline.weight(.semibold))
+                    }
+                    .padding(.top, 2)
                 }
-                Text("Your keys and files stay on your computer.")
+                Text("Paired, your keys and files stay on your computer. On the phone alone, bring your own key; chats sync once you pair.")
                     .font(.footnote)
                     .foregroundStyle(Palette.faint)
+                    .multilineTextAlignment(.center)
                     .padding(.top, 14)
             }
             .padding(.horizontal, 24)

@@ -11,6 +11,11 @@
 	<string>Syph connects to the Syph app running on your computer.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Syph uses the camera to scan the pairing QR code shown on your computer.</string>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

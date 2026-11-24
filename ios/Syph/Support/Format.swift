@@ -81,6 +81,14 @@ enum Fmt {
         let i = ref.firstIndex(of: ":")
         let provider = i.map { String(ref[..<$0]) } ?? "openrouter"
         let model = i.map { String(ref[ref.index(after: $0)...]) } ?? ref
+        if provider == "minimax" {
+            return model.replacingOccurrences(of: "MiniMax-", with: "MiniMax ").replacingOccurrences(of: "-", with: " ")
+        }
+        if provider == "gemini" {
+            var m = model.replacingOccurrences(of: "models/", with: "")
+            if m.hasPrefix("gemini-") { m = "Gemini " + m.dropFirst(7) }
+            return m.replacingOccurrences(of: "-", with: " ").split(separator: " ").map { w in w.prefix(1).uppercased() + w.dropFirst() }.joined(separator: " ")
+        }
         if provider != "openrouter" { return "\(model) · \(provider)" }
         var name = String(model.split(separator: "/").last ?? Substring(model))
         if name.hasPrefix("deepseek-") { name = "DeepSeek " + name.dropFirst(9) }
@@ -91,10 +99,22 @@ enum Fmt {
     static func providerLabel(_ p: String) -> String {
         switch p {
         case "openrouter": return "OpenRouter"
+        case "minimax": return "MiniMax"
+        case "gemini": return "Google Gemini"
         case "ollama": return "Local · Ollama"
         case "lmstudio": return "Local · LM Studio"
         default: return p
         }
+    }
+
+    /// When a usage window resets, from ms since 1970: "in 42m", "in 3h 5m", "Tue 9:00 AM".
+    static func resetsIn(_ ms: Double) -> String {
+        let s = max(0, Int(((ms / 1000) - Date().timeIntervalSince1970).rounded()))
+        if s < 60 { return "in under a minute" }
+        let m = s / 60
+        if m < 60 { return "in \(m)m" }
+        if m < 60 * 24 { return "in \(m / 60)h \(m % 60)m" }
+        return Date(timeIntervalSince1970: ms / 1000).formatted(.dateTime.weekday(.abbreviated).hour().minute())
     }
 
     static func greeting() -> String {
